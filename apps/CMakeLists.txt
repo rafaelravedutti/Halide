@@ -14,7 +14,7 @@ enable_testing()
 # add_subdirectory(HelloPyTorch)  # TODO(#5374): missing CMake build
 # add_subdirectory(HelloWasm)  # TODO(#5374): missing CMake build
 # add_subdirectory(HelloiOS)  # TODO(#5374): missing CMake build
-# add_subdirectory(auto_viz)  # TODO(#5374): missing CMake build
+# add_subdirectory(auto_viz)  # TODO(#5522): bit-rotted
 add_subdirectory(bgu)
 add_subdirectory(bilateral_grid)
 add_subdirectory(blur)
