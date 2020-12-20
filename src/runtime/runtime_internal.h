@@ -189,6 +189,22 @@ WEAK_INLINE int halide_malloc_alignment();
 
 void halide_thread_yield();
 
+WEAK int halide_papi_pipeline_start(void *user_context,
+                                    const char *pipeline_name,
+                                    int num_funcs,
+                                    int num_loops,
+                                    const uint64_t *func_names,
+                                    const uint64_t *loop_names,
+                                    const uint64_t *func_show_threads_prod,
+                                    const uint64_t *func_show_threads_cons,
+                                    const uint64_t *loop_show_threads);
+WEAK void halide_papi_stack_peak_update(void *user_context, void *pipeline_state, uint64_t *f_values);
+WEAK void halide_papi_memory_allocate(void *user_context, void *pipeline_state, int func_id, uint64_t incr);
+WEAK void halide_papi_memory_free(void *user_context, void *pipeline_state, int func_id, uint64_t decr);
+WEAK void halide_papi_report(void *user_context);
+WEAK void halide_papi_reset();
+WEAK void halide_papi_pipeline_end(void *user_context, void *state);
+
 }  // extern "C"
 
 namespace {

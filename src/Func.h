@@ -2397,6 +2397,12 @@ public:
      * halide_trace. */
     Func &trace_realizations();
 
+    /** Profile this function. */
+    Func &profile(int level = 1, bool show_threads = false, bool enable = true);
+
+    /** Profile this function inside some parent. */
+    Func &profile_in(Internal::Function &parent, int level = 1, bool show_threads = false, bool enable = true);
+
     /** Add a string of arbitrary text that will be passed thru to trace
      * inspection code if the Func is realized in trace mode. (Funcs that are
      * inlined won't have their tags emitted.) Ignored entirely if

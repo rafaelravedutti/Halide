@@ -12,6 +12,7 @@
 #include "IRMutator.h"
 #include "IROperator.h"
 #include "IRPrinter.h"
+#include "PAPIProfiling.h"
 #include "ParallelRVar.h"
 #include "Random.h"
 #include "Scope.h"
@@ -28,6 +29,8 @@ using std::vector;
 typedef map<FunctionPtr, FunctionPtr> DeepCopyMap;
 
 struct FunctionContents;
+
+extern std::vector<std::tuple<std::string, int, bool, std::string>> papi_profiler_defs;
 
 namespace {
 // Weaken all the references to a particular Function to break
@@ -933,6 +936,21 @@ bool Function::is_tracing_realizations() const {
 }
 const std::vector<std::string> &Function::get_trace_tags() const {
     return contents->trace_tags;
+}
+
+void Function::profile(int level, bool show_threads, bool enable) {
+    if(show_threads) {
+        level |= PROFILE_SHOW_THREADS;
+    }
+
+    papi_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, ""));
+}
+void Function::profile_in(Function &parent, int level, bool show_threads, bool enable) {
+    if(show_threads) {
+        level |= PROFILE_SHOW_THREADS;
+    }
+
+    papi_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, parent.name()));
 }
 
 void Function::freeze() {

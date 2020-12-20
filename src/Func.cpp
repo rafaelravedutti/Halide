@@ -2642,6 +2642,18 @@ Func &Func::add_trace_tag(const std::string &trace_tag) {
     return *this;
 }
 
+Func &Func::profile(int level, bool show_threads, bool enable) {
+    invalidate_cache();
+    func.profile(level, show_threads, enable);
+    return *this;
+}
+
+Func &Func::profile_in(Internal::Function &parent, int level, bool show_threads, bool enable) {
+    invalidate_cache();
+    func.profile_in(parent, level, show_threads, enable);
+    return *this;
+}
+
 void Func::debug_to_file(const string &filename) {
     invalidate_cache();
     func.debug_file() = filename;

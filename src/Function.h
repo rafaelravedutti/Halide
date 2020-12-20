@@ -247,6 +247,9 @@ public:
     const std::vector<std::string> &get_trace_tags() const;
     // @}
 
+    void profile(int level = 1, bool show_threads = false, bool enable = true);
+    void profile_in(Function &parent, int level = 1, bool show_threads = false, bool enable = true);
+
     /** Replace this Function's LoopLevels with locked copies that
      * cannot be mutated further. */
     void lock_loop_levels();

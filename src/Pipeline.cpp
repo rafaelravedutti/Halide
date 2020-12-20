@@ -1176,6 +1176,22 @@ void Pipeline::realize(RealizationArg outputs, const Target &t,
         }
     }
 
+    // If we're profiling, report runtimes and reset profiler stats.
+    if (target.has_feature(Target::PAPI)) {
+        JITModule::Symbol report_sym =
+            contents->jit_module.find_symbol_by_name("halide_papi_report");
+        JITModule::Symbol reset_sym =
+            contents->jit_module.find_symbol_by_name("halide_papi_reset");
+        if (report_sym.address && reset_sym.address) {
+            void *uc = &jit_context.jit_context;
+            void (*report_fn_ptr)(void *) = (void (*)(void *))(report_sym.address);
+            report_fn_ptr(uc);
+
+            void (*reset_fn_ptr)() = (void (*)())(reset_sym.address);
+            reset_fn_ptr();
+        }
+    }
+
     jit_context.finalize(exit_status);
 }
 

@@ -1325,6 +1325,7 @@ typedef enum halide_target_feature_t {
     halide_target_feature_egl,                    ///< Force use of EGL support.
     halide_target_feature_arm_dot_prod,           ///< Enable ARMv8.2-a dotprod extension (i.e. udot and sdot instructions)
     halide_llvm_large_code_model,                 ///< Use the LLVM large code model to compile
+    halide_target_feature_papi,                   ///< Launch a profiler to instrument Halide applications
     halide_target_feature_end                     ///< A sentinel. Every target is considered to have this feature, and setting this feature does nothing.
 } halide_target_feature_t;
 
@@ -1833,6 +1834,150 @@ extern float halide_float16_bits_to_float(uint16_t);
 /** Read bits representing a half precision floating point number and return
  *  the double that represents the same value */
 extern double halide_float16_bits_to_double(uint16_t);
+
+struct halide_papi_func_stats {
+    /** Total time taken evaluating this Func (in nanoseconds). */
+    uint64_t time;
+
+    /** Total time taken evaluating this Func (in nanoseconds). */
+    uint64_t clock_start[2], clock_accum[2];
+
+    /** Total time taken evaluating this Func (in nanoseconds). */
+    uint64_t overhead_clock_start, overhead_clock_accum;
+
+    /** The name of this Func. A global constant string. */
+    const char *name;
+
+    /** The average number of thread pool worker threads active while computing this Func. */
+    uint64_t active_threads_numerator, active_threads_denominator;
+
+    /** Event counters */
+    long long int event_counters[2][32][128];
+
+    /** Event counter has been used? */
+    int counter_used[2][32];
+
+    /** Overhead event counters */
+    long long int overhead_counters[32][128];
+
+    /** Overhead event counter has been used? */
+    int overhead_counter_used[32];
+
+    /** Show threads in production level */
+    bool show_threads_prod, show_threads_cons;
+
+    /** Iteration counters */
+    uint64_t iterations[2];
+
+    /** Overhead iteration counter */
+    uint64_t overhead_iterations;
+};
+
+struct halide_papi_loop_stats {
+    /** The name of this Func. A global constant string. */
+    const char *name;
+
+    /** Show threads */
+    bool show_threads;
+
+    /** Loop event counters */
+    long long int loop_counters[32][128];
+
+    /** Loop event counter has been used? */
+    int loop_counter_used[32];
+
+    /** Iteration counter */
+    uint64_t iterations;
+};
+
+struct halide_papi_pipeline_stats {
+    /** Total time taken evaluating this pipeline (in nanoseconds). */
+    uint64_t time;
+
+    /** The average number of thread pool worker threads doing useful
+     * work while computing this pipeline. */
+    uint64_t active_threads_numerator, active_threads_denominator;
+
+    /** The name of this pipeline. A global constant string. */
+    const char *name;
+
+    /** An array containing states for each Func in this pipeline. */
+    struct halide_papi_func_stats *funcs;
+
+    /** An array containing states for each Func in this pipeline. */
+    struct halide_papi_loop_stats *loops;
+
+    /** The next pipeline_stats pointer. It's a void * because types
+     * in the Halide runtime may not currently be recursive. */
+    void *next;
+
+    /** The number of funcs in this pipeline. */
+    int num_funcs;
+
+    /** The number of loops to profile in this pipeline. */
+    int num_loops;
+
+    /** An internal base id used to identify the funcs in this pipeline. */
+    int first_func_id;
+
+    /** The number of times this pipeline has been run. */
+    int runs;
+
+    /** The total number of samples taken inside of this pipeline. */
+    int samples;
+};
+
+/** Structure for the PAPI profiler */
+struct halide_papi_state {
+    /** Guards access to the fields below. If not locked, the sampling
+     * profiler thread is free to modify things below (including
+     * reordering the linked list of pipeline stats). */
+    struct halide_mutex lock;
+
+    /** The amount of time the profiler thread sleeps between samples
+     * in milliseconds. Defaults to 1 */
+    int sleep_time;
+
+    /** An internal id used for bookkeeping. */
+    int first_free_id;
+
+    /** The id of the current running Func. Set by the pipeline, read
+     * periodically by the profiler thread. */
+    int current_func;
+
+    /** The number of threads currently doing work. */
+    int active_threads;
+
+    /** A linked list of stats gathered for each pipeline. */
+    struct halide_papi_pipeline_stats *pipelines;
+
+    /** Retrieve remote profiler state. Used so that the sampling
+     * profiler can follow along with execution that occurs elsewhere,
+     * e.g. on a DSP. If null, it reads from the int above instead. */
+    void (*get_remote_profiler_state)(int *func, int *active_workers);
+
+    /** Sampling thread reference to be joined at shutdown. */
+    struct halide_thread *sampling_thread;
+};
+
+/** Get a pointer to the global PAPI profiler state for programmatic
+ * inspection. Lock it before using to pause the profiler. */
+extern struct halide_papi_state *halide_papi_get_state();
+
+/** Profiler func ids with special meanings. */
+enum {
+    /// current_func takes on this value when not inside Halide code
+    halide_papi_outside_of_halide = -1,
+    /// Set current_func to this value to tell the profiling thread to
+    /// halt. It will start up again next time you run a pipeline with
+    /// profiling enabled.
+    halide_papi_please_stop = -2
+};
+
+extern struct halide_papi_pipeline_stats *halide_papi_get_pipeline_state(const char *pipeline_name);
+extern void halide_papi_reset();
+void halide_papi_shutdown();
+extern void halide_papi_report(void *user_context);
 
 // TODO: Conversion functions to half
 

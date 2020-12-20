@@ -319,6 +319,7 @@ const std::map<std::string, Target::Feature> feature_name_map = {
     {"egl", Target::EGL},
     {"user_context", Target::UserContext},
     {"matlab", Target::Matlab},
+    {"papi", Target::PAPI},
     {"profile", Target::Profile},
     {"no_runtime", Target::NoRuntime},
     {"metal", Target::Metal},

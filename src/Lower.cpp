@@ -40,6 +40,7 @@
 #include "LoopCarry.h"
 #include "LowerWarpShuffles.h"
 #include "Memoization.h"
+#include "PAPIProfiling.h"
 #include "PartitionLoops.h"
 #include "Prefetch.h"
 #include "Profiling.h"
@@ -404,6 +405,12 @@ Module lower(const vector<Function> &output_funcs,
         s = inject_profiling(s, pipeline_name);
         debug(2) << "Lowering after injecting profiling:\n"
                  << s << "\n\n";
+    }
+
+    if (t.has_feature(Target::PAPI)) {
+        debug(1) << "Injecting PAPI profiling...\n";
+        s = inject_papi_profiling(s, pipeline_name);
+        debug(2) << "Lowering after injecting PAPI profiling:\n" << s << "\n\n";
     }
 
     if (t.has_feature(Target::CUDA)) {
