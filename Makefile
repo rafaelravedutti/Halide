@@ -1090,7 +1090,7 @@ test_tutorial: $(TUTORIALS:$(ROOT_DIR)/tutorial/%.cpp=tutorial_%)
 test_valgrind: $(CORRECTNESS_TESTS:$(ROOT_DIR)/test/correctness/%.cpp=valgrind_%)
 test_avx512: $(CORRECTNESS_TESTS:$(ROOT_DIR)/test/correctness/%.cpp=avx512_%)
 test_opengl: $(OPENGL_TESTS:$(ROOT_DIR)/test/opengl/%.cpp=opengl_%)
-test_auto_schedule: test_mullapudi2016 test_li2018 test_adams2019
+test_auto_schedule: test_mullapudi2016 test_li2018 #test_adams2019
 
 .PHONY: test_correctness_multi_gpu
 test_correctness_multi_gpu: correctness_gpu_multi_device
@@ -2227,8 +2227,8 @@ endif
 .PHONY: autoschedulers
 autoschedulers: \
 $(DISTRIB_DIR)/lib/libautoschedule_mullapudi2016.$(SHARED_EXT) \
-$(DISTRIB_DIR)/lib/libautoschedule_li2018.$(SHARED_EXT) \
-$(DISTRIB_DIR)/lib/libautoschedule_adams2019.$(SHARED_EXT)
+$(DISTRIB_DIR)/lib/libautoschedule_li2018.$(SHARED_EXT) #\
+#$(DISTRIB_DIR)/lib/libautoschedule_adams2019.$(SHARED_EXT)
 
 .PHONY: distrib
 distrib: $(DISTRIB_DIR)/lib/libHalide.$(SHARED_EXT) autoschedulers
