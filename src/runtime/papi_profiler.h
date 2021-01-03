@@ -29,11 +29,12 @@ extern int papi_halide_number_of_events();
 extern void papi_halide_shutdown();
 
 /* Thread functions */
-extern int papi_halide_enter_parallel_region();
-extern int papi_halide_leave_parallel_region();
-extern int papi_halide_start_thread();
-extern int papi_halide_stop_thread();
-extern int papi_halide_get_thread_index();
+//extern int papi_halide_enter_parallel_region();
+WEAK int papi_halide_enter_parallel_region() { return 0; }
+WEAK int papi_halide_leave_parallel_region() { return 0; }
+WEAK int papi_halide_start_thread() { return 0; }
+WEAK int papi_halide_stop_thread() { return 0; }
+WEAK int papi_halide_get_thread_index() { return 0; }
 
 }
 
