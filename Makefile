@@ -500,7 +500,7 @@ SOURCE_FILES = \
   Parameter.cpp \
   ParamMap.cpp \
   PartitionLoops.cpp \
-  PAPIProfiling.cpp \
+  PerfCtrProfiling.cpp \
   Pipeline.cpp \
   Prefetch.cpp \
   PrintLoopNest.cpp \
@@ -685,7 +685,7 @@ HEADER_FILES = \
   Parameter.h \
   ParamMap.h \
   PartitionLoops.h \
-  PAPIProfiling.h \
+  PerfCtrProfiling.h \
   Pipeline.h \
   Prefetch.h \
   Profiling.h \
@@ -792,8 +792,8 @@ RUNTIME_CPP_COMPONENTS = \
   osx_host_cpu_count \
   osx_opengl_context \
   osx_yield \
-  papi_profiler \
-  papi_profiler_inlined \
+  perfctr_profiler \
+  perfctr_profiler_inlined \
   posix_allocator \
   posix_clock \
   posix_error_handler \

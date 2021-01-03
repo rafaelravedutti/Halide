@@ -3,7 +3,7 @@
 #include <string>
 #include <limits>
 
-#include "PAPIProfiling.h"
+#include "PerfCtrProfiling.h"
 #include "CodeGen_Internal.h"
 #include "IRMutator.h"
 #include "IROperator.h"
@@ -21,28 +21,28 @@ using std::string;
 using std::tuple;
 using std::vector;
 
-vector<tuple<string, string, bool>> papi_profiler_loops;
+vector<tuple<string, string, bool>> perfctr_profiler_loops;
 
 void profile_at(LoopLevel loop_level, bool show_threads) {
     auto locked_loop_level = loop_level.lock();
-    papi_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
+    perfctr_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
 }
 
 void profile_at(Func f, RVar var, bool show_threads) {
     auto locked_loop_level = LoopLevel(f, var).lock();
-    papi_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
+    perfctr_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
 }
 
 void profile_at(Func f, Var var, bool show_threads) {
     auto locked_loop_level = LoopLevel(f, var).lock();
-    papi_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
+    perfctr_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
 }
 
 namespace Internal {
 
-vector<tuple<string, int, bool, string>> papi_profiler_defs;
+vector<tuple<string, int, bool, string>> perfctr_profiler_defs;
 
-class InjectPAPIProfiling : public IRMutator {
+class InjectPerfCtrProfiling : public IRMutator {
 public:
     map<string, int> indices;   // maps from func name -> index in buffer.
     map<string, int> loops;   // maps from loop name -> index in buffer.
@@ -55,7 +55,7 @@ public:
 
     string pipeline_name;
 
-    InjectPAPIProfiling(const string &pipeline_name) : pipeline_name(pipeline_name) {
+    InjectPerfCtrProfiling(const string &pipeline_name) : pipeline_name(pipeline_name) {
         indices["overhead"] = 0;
         stack.push_back(0);
     }
@@ -144,7 +144,7 @@ private:
           }
         }
 
-        auto it = find_if(papi_profiler_defs.begin(), papi_profiler_defs.end(),
+        auto it = find_if(perfctr_profiler_defs.begin(), perfctr_profiler_defs.end(),
                           [op, parent_name](std::tuple<string, int, bool, string> const &elem) {
             bool level_cond =
                 (std::get<1>(elem) & PROFILE_PRODUCTION && op->is_producer) ||
@@ -156,7 +156,7 @@ private:
             return std::get<0>(elem) == op->name && level_cond && parent_cond;
         });
 
-        must_profile = it != papi_profiler_defs.end() && std::get<2>(*it);
+        must_profile = it != perfctr_profiler_defs.end() && std::get<2>(*it);
         must_show_threads = must_profile && std::get<1>(*it) & PROFILE_SHOW_THREADS;
 
         if(stack.size() > 1) {
@@ -179,7 +179,7 @@ private:
             idx = stack.back();
         }
 
-        if(!must_profile && it == papi_profiler_defs.end() && profile_stack.back().first) {
+        if(!must_profile && it == perfctr_profiler_defs.end() && profile_stack.back().first) {
           must_profile = true;
           must_show_threads = profile_stack.back().second;
         }
@@ -191,17 +191,17 @@ private:
             Expr enter_task, leave_task;
 
             if(op->is_producer && func_childrens[idx] > 0) {
-                enter_task = Call::make(Int(32), "halide_papi_enter_overhead_region",
+                enter_task = Call::make(Int(32), "halide_perfctr_enter_overhead_region",
                                         {profiler_state, profiler_token, idx}, Call::Extern);
 
-                leave_task = Call::make(Int(32), "halide_papi_leave_overhead_region",
+                leave_task = Call::make(Int(32), "halide_perfctr_leave_overhead_region",
                                         {profiler_state, profiler_token, idx}, Call::Extern);
             } else {
-                enter_task = Call::make(Int(32), "halide_papi_enter_current_func",
+                enter_task = Call::make(Int(32), "halide_perfctr_enter_current_func",
                                         {profiler_state, profiler_token, get_func_id(op->name),
                                          make_bool(op->is_producer)}, Call::Extern);
 
-                leave_task = Call::make(Int(32), "halide_papi_leave_current_func",
+                leave_task = Call::make(Int(32), "halide_perfctr_leave_current_func",
                                         {profiler_state, profiler_token, get_func_id(op->name),
                                          make_bool(op->is_producer)}, Call::Extern);
             }
@@ -210,7 +210,7 @@ private:
         }
 
         // This call gets inlined and becomes a single store instruction.
-        Expr set_task = Call::make(Int(32), "halide_papi_set_current_func",
+        Expr set_task = Call::make(Int(32), "halide_perfctr_set_current_func",
                                    {profiler_state, profiler_token, idx}, Call::Extern);
 
         body = Block::make(Evaluate::make(set_task), body);
@@ -220,10 +220,10 @@ private:
         if(must_profile && !profile_stack.empty()) {
             int parent = stack.back();
 
-            Expr enter_overhead = Call::make(Int(32), "halide_papi_enter_overhead_region",
+            Expr enter_overhead = Call::make(Int(32), "halide_perfctr_enter_overhead_region",
                                              {profiler_state, profiler_token, parent}, Call::Extern);
 
-            Expr leave_overhead = Call::make(Int(32), "halide_papi_leave_overhead_region",
+            Expr leave_overhead = Call::make(Int(32), "halide_perfctr_leave_overhead_region",
                                              {profiler_state, profiler_token, parent}, Call::Extern);
 
             stmt = Block::make({Evaluate::make(leave_overhead), stmt, Evaluate::make(enter_overhead)});
@@ -254,17 +254,17 @@ private:
         Expr state = Variable::make(Handle(), "profiler_state");
 
         Stmt enter_parallel_region =
-            Evaluate::make(Call::make(Int(32), "halide_papi_enter_parallel_region",
+            Evaluate::make(Call::make(Int(32), "halide_perfctr_enter_parallel_region",
                                       {state}, Call::Extern));
         Stmt leave_parallel_region =
-            Evaluate::make(Call::make(Int(32), "halide_papi_leave_parallel_region",
+            Evaluate::make(Call::make(Int(32), "halide_perfctr_leave_parallel_region",
                                       {state}, Call::Extern));
 
         Stmt incr_active_threads =
-            Evaluate::make(Call::make(Int(32), "halide_papi_incr_active_threads",
+            Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads",
                                       {state}, Call::Extern));
         Stmt decr_active_threads =
-            Evaluate::make(Call::make(Int(32), "halide_papi_decr_active_threads",
+            Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads",
                                       {state}, Call::Extern));
 
         if (update_active_threads) {
@@ -286,7 +286,7 @@ private:
             // Get the profiler state pointer from scratch inside the
             // kernel. There will be a separate copy of the state on
             // the DSP that the host side will periodically query.
-            Expr get_state = Call::make(Handle(), "halide_papi_get_state", {}, Call::Extern);
+            Expr get_state = Call::make(Handle(), "halide_perfctr_get_state", {}, Call::Extern);
             body = substitute("profiler_state", Variable::make(Handle(), "hvx_profiler_state"), body);
             body = LetStmt::make("hvx_profiler_state", get_state, body);
         } else if (op->device_api == DeviceAPI::None ||
@@ -298,20 +298,20 @@ private:
 
         Stmt stmt = For::make(op->name, op->min, op->extent, op->for_type, op->device_api, body);
 
-        auto it = find_if(papi_profiler_loops.begin(), papi_profiler_loops.end(),
+        auto it = find_if(perfctr_profiler_loops.begin(), perfctr_profiler_loops.end(),
                           [op](std::tuple<string, string, bool> const &elem) {
             return starts_with(op->name, std::get<0>(elem) + ".") && ends_with(op->name, "." + std::get<1>(elem));
         });
 
-        if (it != papi_profiler_loops.end()) {
+        if (it != perfctr_profiler_loops.end()) {
             Expr profiler_token = Variable::make(Int(32), "profiler_token");
             Expr profiler_state = Variable::make(Handle(), "profiler_state");
             int loop_id = (int) loops.size();
 
-            Stmt enter_loop = Evaluate::make(Call::make(Int(32), "halide_papi_enter_loop",
+            Stmt enter_loop = Evaluate::make(Call::make(Int(32), "halide_perfctr_enter_loop",
                                              {profiler_state, profiler_token, make_const(UInt(64), loop_id)}, Call::Extern));
 
-            Stmt leave_loop = Evaluate::make(Call::make(Int(32), "halide_papi_leave_loop",
+            Stmt leave_loop = Evaluate::make(Call::make(Int(32), "halide_perfctr_leave_loop",
                                              {profiler_state, profiler_token, make_const(UInt(64), loop_id)}, Call::Extern));
 
             stmt = Block::make({enter_loop, stmt, leave_loop});
@@ -327,8 +327,8 @@ private:
     }
 };
 
-Stmt inject_papi_profiling(Stmt s, string pipeline_name) {
-    InjectPAPIProfiling profiling(pipeline_name);
+Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
+    InjectPerfCtrProfiling profiling(pipeline_name);
     s = profiling.mutate(s);
 
     int num_funcs = (int)(profiling.indices.size());
@@ -341,28 +341,28 @@ Stmt inject_papi_profiling(Stmt s, string pipeline_name) {
     Expr func_threads_cons_buf = Variable::make(Handle(), "profiling_func_threads_cons");
     Expr loop_threads_buf = Variable::make(Handle(), "profiling_loop_threads");
 
-    Expr start_profiler = Call::make(Int(32), "halide_papi_pipeline_start",
+    Expr start_profiler = Call::make(Int(32), "halide_perfctr_pipeline_start",
                                      {pipeline_name, num_funcs, num_loops, func_names_buf, loop_names_buf,
                                       func_threads_prod_buf, func_threads_cons_buf, loop_threads_buf}, Call::Extern);
 
-    Expr get_state = Call::make(Handle(), "halide_papi_get_state", {}, Call::Extern);
+    Expr get_state = Call::make(Handle(), "halide_perfctr_get_state", {}, Call::Extern);
 
-    Expr get_pipeline_state = Call::make(Handle(), "halide_papi_get_pipeline_state", {pipeline_name}, Call::Extern);
+    Expr get_pipeline_state = Call::make(Handle(), "halide_perfctr_get_pipeline_state", {pipeline_name}, Call::Extern);
 
     Expr profiler_token = Variable::make(Int(32), "profiler_token");
 
     //Expr stop_profiler = Call::make(Int(32), Call::register_destructor,
-    //                                {Expr("halide_papi_pipeline_end"), get_state}, Call::Intrinsic);
+    //                                {Expr("halide_perfctr_pipeline_end"), get_state}, Call::Intrinsic);
     Expr stop_profiler = Call::make(Handle(), Call::register_destructor,
-                                    {Expr("halide_papi_pipeline_end"), get_state}, Call::Intrinsic);
+                                    {Expr("halide_perfctr_pipeline_end"), get_state}, Call::Intrinsic);
 
     Expr profiler_state = Variable::make(Handle(), "profiler_state");
 
     Stmt incr_active_threads =
-        Evaluate::make(Call::make(Int(32), "halide_papi_incr_active_threads",
+        Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads",
                                   {profiler_state}, Call::Extern));
     Stmt decr_active_threads =
-        Evaluate::make(Call::make(Int(32), "halide_papi_decr_active_threads",
+        Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads",
                                   {profiler_state}, Call::Extern));
     s = Block::make({incr_active_threads, s, decr_active_threads});
 

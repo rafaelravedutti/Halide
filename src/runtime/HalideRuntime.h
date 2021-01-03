@@ -1325,7 +1325,7 @@ typedef enum halide_target_feature_t {
     halide_target_feature_egl,                    ///< Force use of EGL support.
     halide_target_feature_arm_dot_prod,           ///< Enable ARMv8.2-a dotprod extension (i.e. udot and sdot instructions)
     halide_llvm_large_code_model,                 ///< Use the LLVM large code model to compile
-    halide_target_feature_papi,                   ///< Launch a profiler to instrument Halide applications
+    halide_target_feature_perfctr,                   ///< Launch a profiler to instrument Halide applications
     halide_target_feature_end                     ///< A sentinel. Every target is considered to have this feature, and setting this feature does nothing.
 } halide_target_feature_t;
 
@@ -1835,7 +1835,7 @@ extern float halide_float16_bits_to_float(uint16_t);
  *  the double that represents the same value */
 extern double halide_float16_bits_to_double(uint16_t);
 
-struct halide_papi_func_stats {
+struct halide_perfctr_func_stats {
     /** Total time taken evaluating this Func (in nanoseconds). */
     uint64_t time;
 
@@ -1873,7 +1873,7 @@ struct halide_papi_func_stats {
     uint64_t overhead_iterations;
 };
 
-struct halide_papi_loop_stats {
+struct halide_perfctr_loop_stats {
     /** The name of this Func. A global constant string. */
     const char *name;
 
@@ -1890,7 +1890,7 @@ struct halide_papi_loop_stats {
     uint64_t iterations;
 };
 
-struct halide_papi_pipeline_stats {
+struct halide_perfctr_pipeline_stats {
     /** Total time taken evaluating this pipeline (in nanoseconds). */
     uint64_t time;
 
@@ -1902,10 +1902,10 @@ struct halide_papi_pipeline_stats {
     const char *name;
 
     /** An array containing states for each Func in this pipeline. */
-    struct halide_papi_func_stats *funcs;
+    struct halide_perfctr_func_stats *funcs;
 
     /** An array containing states for each Func in this pipeline. */
-    struct halide_papi_loop_stats *loops;
+    struct halide_perfctr_loop_stats *loops;
 
     /** The next pipeline_stats pointer. It's a void * because types
      * in the Halide runtime may not currently be recursive. */
@@ -1927,8 +1927,8 @@ struct halide_papi_pipeline_stats {
     int samples;
 };
 
-/** Structure for the PAPI profiler */
-struct halide_papi_state {
+/** Structure for the PERFCTR profiler */
+struct halide_perfctr_state {
     /** Guards access to the fields below. If not locked, the sampling
      * profiler thread is free to modify things below (including
      * reordering the linked list of pipeline stats). */
@@ -1949,7 +1949,7 @@ struct halide_papi_state {
     int active_threads;
 
     /** A linked list of stats gathered for each pipeline. */
-    struct halide_papi_pipeline_stats *pipelines;
+    struct halide_perfctr_pipeline_stats *pipelines;
 
     /** Retrieve remote profiler state. Used so that the sampling
      * profiler can follow along with execution that occurs elsewhere,
@@ -1960,24 +1960,24 @@ struct halide_papi_state {
     struct halide_thread *sampling_thread;
 };
 
-/** Get a pointer to the global PAPI profiler state for programmatic
+/** Get a pointer to the global PERFCTR profiler state for programmatic
  * inspection. Lock it before using to pause the profiler. */
-extern struct halide_papi_state *halide_papi_get_state();
+extern struct halide_perfctr_state *halide_perfctr_get_state();
 
 /** Profiler func ids with special meanings. */
 enum {
     /// current_func takes on this value when not inside Halide code
-    halide_papi_outside_of_halide = -1,
+    halide_perfctr_outside_of_halide = -1,
     /// Set current_func to this value to tell the profiling thread to
     /// halt. It will start up again next time you run a pipeline with
     /// profiling enabled.
-    halide_papi_please_stop = -2
+    halide_perfctr_please_stop = -2
 };
 
-extern struct halide_papi_pipeline_stats *halide_papi_get_pipeline_state(const char *pipeline_name);
-extern void halide_papi_reset();
-void halide_papi_shutdown();
-extern void halide_papi_report(void *user_context);
+extern struct halide_perfctr_pipeline_stats *halide_perfctr_get_pipeline_state(const char *pipeline_name);
+extern void halide_perfctr_reset();
+void halide_perfctr_shutdown();
+extern void halide_perfctr_report(void *user_context);
 
 // TODO: Conversion functions to half
 

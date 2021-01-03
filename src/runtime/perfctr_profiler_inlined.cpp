@@ -1,5 +1,5 @@
 #include "HalideRuntime.h"
-#include "papi_profiler.h"
+#include "perfctr_profiler.h"
 
 extern "C" {
 

@@ -12,7 +12,7 @@
 #include "IRMutator.h"
 #include "IROperator.h"
 #include "IRPrinter.h"
-#include "PAPIProfiling.h"
+#include "PerfCtrProfiling.h"
 #include "ParallelRVar.h"
 #include "Random.h"
 #include "Scope.h"
@@ -30,7 +30,7 @@ typedef map<FunctionPtr, FunctionPtr> DeepCopyMap;
 
 struct FunctionContents;
 
-extern std::vector<std::tuple<std::string, int, bool, std::string>> papi_profiler_defs;
+extern std::vector<std::tuple<std::string, int, bool, std::string>> perfctr_profiler_defs;
 
 namespace {
 // Weaken all the references to a particular Function to break
@@ -943,14 +943,14 @@ void Function::profile(int level, bool show_threads, bool enable) {
         level |= PROFILE_SHOW_THREADS;
     }
 
-    papi_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, ""));
+    perfctr_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, ""));
 }
 void Function::profile_in(Function &parent, int level, bool show_threads, bool enable) {
     if(show_threads) {
         level |= PROFILE_SHOW_THREADS;
     }
 
-    papi_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, parent.name()));
+    perfctr_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, parent.name()));
 }
 
 void Function::freeze() {

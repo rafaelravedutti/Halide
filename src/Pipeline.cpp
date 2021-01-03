@@ -1177,11 +1177,11 @@ void Pipeline::realize(RealizationArg outputs, const Target &t,
     }
 
     // If we're profiling, report runtimes and reset profiler stats.
-    if (target.has_feature(Target::PAPI)) {
+    if (target.has_feature(Target::PERFCTR)) {
         JITModule::Symbol report_sym =
-            contents->jit_module.find_symbol_by_name("halide_papi_report");
+            contents->jit_module.find_symbol_by_name("halide_perfctr_report");
         JITModule::Symbol reset_sym =
-            contents->jit_module.find_symbol_by_name("halide_papi_reset");
+            contents->jit_module.find_symbol_by_name("halide_perfctr_reset");
         if (report_sym.address && reset_sym.address) {
             void *uc = &jit_context.jit_context;
             void (*report_fn_ptr)(void *) = (void (*)(void *))(report_sym.address);

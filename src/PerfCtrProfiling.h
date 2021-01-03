@@ -50,7 +50,7 @@ namespace Internal {
  * storage flattening, but after all bounds inference.
  *
  */
-Stmt inject_papi_profiling(Stmt, std::string);
+Stmt inject_perfctr_profiling(Stmt, std::string);
 
 }
 }
