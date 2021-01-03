@@ -980,6 +980,7 @@ std::unique_ptr<llvm::Module> get_initial_module_for_target(Target t, llvm::LLVM
                     modules.push_back(get_initmod_windows_profiler(c, bits_64, debug));
                 } else {
                     modules.push_back(get_initmod_profiler(c, bits_64, debug));
+                    modules.push_back(get_initmod_papi_profiler(c, bits_64, debug));
                 }
             }
 
