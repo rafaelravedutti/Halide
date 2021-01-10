@@ -23,8 +23,8 @@ extern "C" {
 
 /* Initialization and markers */
 extern int perfctr_halide_initialize();
-extern int perfctr_halide_marker_start();
-extern int perfctr_halide_marker_stop(long long int *values, int accum);
+extern int perfctr_halide_marker_start(const char *);
+extern int perfctr_halide_marker_stop(const char *, long long int *values, int accum);
 extern int perfctr_halide_number_of_events();
 extern void perfctr_halide_shutdown();
 

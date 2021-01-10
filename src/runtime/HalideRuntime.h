@@ -1851,11 +1851,17 @@ struct halide_perfctr_func_stats {
     /** The average number of thread pool worker threads active while computing this Func. */
     uint64_t active_threads_numerator, active_threads_denominator;
 
+    /** Markers for production and consumption stages */
+    char marker[2][128];
+
     /** Event counters */
     long long int event_counters[2][32][128];
 
     /** Event counter has been used? */
     int counter_used[2][32];
+
+    /** Marker for overhead stage */
+    char overhead_marker[128];
 
     /** Overhead event counters */
     long long int overhead_counters[32][128];
@@ -1874,8 +1880,11 @@ struct halide_perfctr_func_stats {
 };
 
 struct halide_perfctr_loop_stats {
-    /** The name of this Func. A global constant string. */
+    /** The name of this Loop. A global constant string. */
     const char *name;
+
+    /** The marker of this Loop. */
+    const char *marker;
 
     /** Show threads */
     bool show_threads;
