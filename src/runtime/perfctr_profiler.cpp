@@ -151,9 +151,9 @@ WEAK int halide_perfctr_pipeline_start(
           p->funcs[i].clock_accum[l] = 0;
           p->funcs[i].iterations[l] = 0;
 
-          for(j = 0; func_names[j] != '\0'; ++j) {
-            p->funcs[i].marker[l][j] = func_names[j];
-            p->funcs[i].overhead_marker[j] = func_names[j];
+          for(j = 0; p->funcs[i].name[j] != '\0'; ++j) {
+            p->funcs[i].marker[l][j] = p->funcs[i].name[j];
+            p->funcs[i].overhead_marker[j] = p->funcs[i].name[j];
           }
 
           p->funcs[i].marker[l][j] = '_';
