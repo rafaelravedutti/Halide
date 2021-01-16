@@ -29,12 +29,19 @@ extern int perfctr_halide_number_of_events();
 extern void perfctr_halide_shutdown();
 
 /* Thread functions */
-//extern int perfctr_halide_enter_parallel_region();
+extern int perfctr_halide_enter_parallel_region();
+extern int perfctr_halide_leave_parallel_region();
+extern int perfctr_halide_start_thread();
+extern int perfctr_halide_stop_thread();
+extern int perfctr_halide_get_thread_index();
+
+/*
 WEAK int perfctr_halide_enter_parallel_region() { return 0; }
 WEAK int perfctr_halide_leave_parallel_region() { return 0; }
 WEAK int perfctr_halide_start_thread() { return 0; }
 WEAK int perfctr_halide_stop_thread() { return 0; }
 WEAK int perfctr_halide_get_thread_index() { return 0; }
+*/
 
 }
 

@@ -7,6 +7,7 @@
 
 // Likwid manage the event counters and threads by itself
 #define USE_LIKWID
+//#define USE_SAMPLING_THREAD
 
 extern "C" {
 
@@ -229,10 +230,14 @@ WEAK int halide_perfctr_pipeline_start(
 
   ScopedMutexLock lock(&s->lock);
 
+#ifdef USE_SAMPLING_THREAD
   if (!s->sampling_thread) {
     halide_start_clock(user_context);
     s->sampling_thread = halide_spawn_thread(sampling_profiler_thread, NULL);
   }
+#else
+  s->sampling_thread = NULL;
+#endif
 
   p->runs++;
 
@@ -545,6 +550,7 @@ WEAK void halide_perfctr_reset() {
 __attribute__((destructor))  WEAK void halide_perfctr_shutdown() {
   halide_perfctr_state *s = halide_perfctr_get_state();
 
+  perfctr_halide_shutdown();
   if (!s->sampling_thread) {
       return;
   }
@@ -553,8 +559,6 @@ __attribute__((destructor))  WEAK void halide_perfctr_shutdown() {
   halide_join_thread(s->sampling_thread);
   s->sampling_thread = NULL;
   s->current_func = halide_perfctr_outside_of_halide;
-
-  perfctr_halide_shutdown();
 
   // Print results. No need to lock anything because we just shut
   // down the thread.

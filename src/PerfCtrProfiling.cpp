@@ -13,6 +13,8 @@
 #include "Util.h"
 #include "Func.h"
 
+//#define INJECT_OVERHEAD_MARKERS
+
 namespace Halide {
 
 using std::map;
@@ -191,11 +193,15 @@ private:
             Expr enter_task, leave_task;
 
             if(op->is_producer && func_childrens[idx] > 0) {
+#ifdef INJECT_OVERHEAD_MARKERS
                 enter_task = Call::make(Int(32), "halide_perfctr_enter_overhead_region",
                                         {profiler_state, profiler_token, idx}, Call::Extern);
 
                 leave_task = Call::make(Int(32), "halide_perfctr_leave_overhead_region",
                                         {profiler_state, profiler_token, idx}, Call::Extern);
+
+                body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
+#endif
             } else {
                 enter_task = Call::make(Int(32), "halide_perfctr_enter_current_func",
                                         {profiler_state, profiler_token, get_func_id(op->name),
@@ -204,9 +210,8 @@ private:
                 leave_task = Call::make(Int(32), "halide_perfctr_leave_current_func",
                                         {profiler_state, profiler_token, get_func_id(op->name),
                                          make_bool(op->is_producer)}, Call::Extern);
+                body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
             }
-
-            body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
         }
 
         // This call gets inlined and becomes a single store instruction.
@@ -217,6 +222,7 @@ private:
 
         stmt = ProducerConsumer::make(op->name, op->is_producer, body);
 
+#ifdef INJECT_OVERHEAD_MARKERS
         if(must_profile && !profile_stack.empty()) {
             int parent = stack.back();
 
@@ -228,6 +234,7 @@ private:
 
             stmt = Block::make({Evaluate::make(leave_overhead), stmt, Evaluate::make(enter_overhead)});
         }
+#endif
 
         auto fid = get_func_id(op->name);
 
