@@ -7,7 +7,6 @@
 
 // Likwid manage the event counters and threads by itself
 #define USE_LIKWID
-//#define USE_SAMPLING_THREAD
 
 extern "C" {
 
@@ -24,6 +23,7 @@ static long long int (*last_counters)[32][128];
 static int (*last_counters_used)[32];
 #endif
 
+/*
 WEAK void bill_func(halide_perfctr_state *s, int func_id, uint64_t time, int active_threads) {
   halide_perfctr_pipeline_stats *p_prev = NULL;
   for(halide_perfctr_pipeline_stats *p = s->pipelines; p; p = (halide_perfctr_pipeline_stats *)(p->next)) {
@@ -88,7 +88,7 @@ WEAK void sampling_profiler_thread(void *) {
 
   halide_mutex_unlock(&s->lock);
 }
-
+*/
 }}}
 
 // Returns the address of the global halide_perfctr state
@@ -228,17 +228,15 @@ WEAK int halide_perfctr_pipeline_start(
     return -1;
   }
 
+  /*
   ScopedMutexLock lock(&s->lock);
 
-#ifdef USE_SAMPLING_THREAD
   if (!s->sampling_thread) {
     halide_start_clock(user_context);
     s->sampling_thread = halide_spawn_thread(sampling_profiler_thread, NULL);
   }
-#else
+  */
   s->sampling_thread = NULL;
-#endif
-
   p->runs++;
 
   current_pipeline_stats = p;
@@ -246,6 +244,7 @@ WEAK int halide_perfctr_pipeline_start(
   return p->first_func_id;
 }
 
+/*
 WEAK void halide_perfctr_report_func_prod_cons(void *user_context, halide_perfctr_func_stats *fs, bool is_prod, long long *tot) {
   char line_buf[1024];
   Printer<StringStreamPrinter, sizeof(line_buf)> sstr(user_context, line_buf);
@@ -524,6 +523,7 @@ WEAK void halide_perfctr_report(void *user_context) {
   ScopedMutexLock lock(&s->lock);
   halide_perfctr_report_unlocked(user_context, s);
 }
+*/
 
 WEAK void halide_perfctr_reset_unlocked(halide_perfctr_state *s) {
   while (s->pipelines) {
@@ -537,6 +537,7 @@ WEAK void halide_perfctr_reset_unlocked(halide_perfctr_state *s) {
   s->first_free_id = 0;
 }
 
+/*
 WEAK void halide_perfctr_reset() {
   // WARNING: Do not call this method while any other halide
   // pipeline is running; halide_perfctr_memory_allocate/free and
@@ -546,11 +547,12 @@ WEAK void halide_perfctr_reset() {
   ScopedMutexLock lock(&s->lock);
   halide_perfctr_reset_unlocked(s);
 }
+*/
 
 __attribute__((destructor))  WEAK void halide_perfctr_shutdown() {
   halide_perfctr_state *s = halide_perfctr_get_state();
 
-  perfctr_halide_shutdown();
+  /*
   if (!s->sampling_thread) {
       return;
   }
@@ -562,17 +564,20 @@ __attribute__((destructor))  WEAK void halide_perfctr_shutdown() {
 
   // Print results. No need to lock anything because we just shut
   // down the thread.
-  halide_perfctr_report_unlocked(NULL, s);
+  //halide_perfctr_report_unlocked(NULL, s);
+  */
 
   halide_perfctr_reset_unlocked(s);
+  perfctr_halide_shutdown();
 }
 
 WEAK void halide_perfctr_pipeline_end(void *user_context, void *state) {
-  ((halide_profiler_state *)state)->current_func = halide_profiler_outside_of_halide;
+  //((halide_profiler_state *)state)->current_func = halide_profiler_outside_of_halide;
   halide_perfctr_shutdown();
   current_pipeline_stats = NULL;
 }
 
+/*
 WEAK __attribute__((always_inline)) int halide_perfctr_set_current_func(halide_perfctr_state *state, int tok, int t) {
   // Use empty volatile asm blocks to prevent code motion. Otherwise
   // llvm reorders or elides the stores.
@@ -582,8 +587,9 @@ WEAK __attribute__((always_inline)) int halide_perfctr_set_current_func(halide_p
   asm volatile ("":::);
   return 0;
 }
+*/
 
-WEAK __attribute__((always_inline)) int halide_perfctr_enter_current_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
+WEAK __attribute__((always_inline)) int halide_perfctr_enter_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
   halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
   int level = is_producer ? 0 : 1;
 
@@ -598,7 +604,7 @@ WEAK __attribute__((always_inline)) int halide_perfctr_enter_current_func(halide
   return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_leave_current_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
+WEAK __attribute__((always_inline)) int halide_perfctr_leave_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
   halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
   int level = is_producer ? 0 : 1;
 
@@ -682,21 +688,25 @@ WEAK __attribute__((always_inline)) int halide_perfctr_leave_overhead_region(hal
 }
 
 WEAK __attribute__((always_inline)) int halide_perfctr_incr_active_threads(halide_perfctr_state *state) {
+    /*
     volatile int *ptr = &(state->active_threads);
     asm volatile ("":::);
     int ret = __sync_fetch_and_add(ptr, 1);
     asm volatile ("":::);
+    */
 
     perfctr_halide_start_thread();
-    return ret;
+    return 0;
 }
 
 WEAK __attribute__((always_inline)) int halide_perfctr_decr_active_threads(halide_perfctr_state *state) {
+    /*
     //int thread_idx = perfctr_halide_get_thread_index();
     volatile int *ptr = &(state->active_threads);
     asm volatile ("":::);
     int ret = __sync_fetch_and_sub(ptr, 1);
     asm volatile ("":::);
+    */
 
 #ifndef USE_LIKWID
     /*
@@ -708,7 +718,7 @@ WEAK __attribute__((always_inline)) int halide_perfctr_decr_active_threads(halid
 #endif
 
     perfctr_halide_stop_thread();
-    return ret;
+    return 0;
 }
 
 WEAK __attribute__((always_inline)) int halide_perfctr_enter_parallel_region(halide_perfctr_state *state) {

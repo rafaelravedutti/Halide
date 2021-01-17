@@ -98,39 +98,6 @@ private:
         return idx;
     }
 
-    Expr compute_allocation_size(const vector<Expr> &extents,
-                                 const Expr &condition,
-                                 const Type &type,
-                                 const std::string &name,
-                                 bool &on_stack) {
-        on_stack = true;
-
-        Expr cond = simplify(condition);
-        if (is_const_zero(cond)) { // Condition always false
-            return make_zero(UInt(64));
-        }
-
-        int32_t constant_size = Allocate::constant_allocation_size(extents, name);
-        if (constant_size > 0) {
-            int64_t stack_bytes = constant_size * type.bytes();
-            if (can_allocation_fit_on_stack(stack_bytes)) { // Allocation on stack
-                return make_const(UInt(64), stack_bytes);
-            }
-        }
-
-        // Check that the allocation is not scalar (if it were scalar
-        // it would have constant size).
-        internal_assert(extents.size() > 0);
-
-        on_stack = false;
-        Expr size = cast<uint64_t>(extents[0]);
-        for (size_t i = 1; i < extents.size(); i++) {
-            size *= extents[i];
-        }
-        size = simplify(Select::make(condition, size * type.bytes(), make_zero(UInt(64))));
-        return size;
-    }
-
     Stmt visit(const ProducerConsumer *op) override {
         int idx;
         Stmt body, stmt;
@@ -203,11 +170,11 @@ private:
                 body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
 #endif
             } else {
-                enter_task = Call::make(Int(32), "halide_perfctr_enter_current_func",
+                enter_task = Call::make(Int(32), "halide_perfctr_enter_func",
                                         {profiler_state, profiler_token, get_func_id(op->name),
                                          make_bool(op->is_producer)}, Call::Extern);
 
-                leave_task = Call::make(Int(32), "halide_perfctr_leave_current_func",
+                leave_task = Call::make(Int(32), "halide_perfctr_leave_func",
                                         {profiler_state, profiler_token, get_func_id(op->name),
                                          make_bool(op->is_producer)}, Call::Extern);
                 body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
@@ -215,11 +182,12 @@ private:
         }
 
         // This call gets inlined and becomes a single store instruction.
+        /*
         Expr set_task = Call::make(Int(32), "halide_perfctr_set_current_func",
                                    {profiler_state, profiler_token, idx}, Call::Extern);
 
         body = Block::make(Evaluate::make(set_task), body);
-
+        */
         stmt = ProducerConsumer::make(op->name, op->is_producer, body);
 
 #ifdef INJECT_OVERHEAD_MARKERS
