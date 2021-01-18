@@ -21,7 +21,7 @@ ifeq ($(OS), Windows_NT)
 else
     # let's assume "normal" UNIX such as linux
     # COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz
-    COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz -llikwidhalide -L /home/hpc/iwia/iwia021h/libpapihalide
+    COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz -llikwidhalide -L /home/hpc/iwia/iwia021h/libprofhalide
     FPIC=-fPIC
 ifeq ($(UNAME), Darwin)
     SHARED_EXT=dylib
