@@ -20,8 +20,8 @@ ifeq ($(OS), Windows_NT)
 	$(error Halide no longer supports the MinGW environment.)
 else
     # let's assume "normal" UNIX such as linux
-    # COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz
-    COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz -llikwidhalide -L /home/hpc/iwia/iwia021h/libprofhalide
+    COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz
+    # COMMON_LD_FLAGS=$(LDFLAGS) -ldl -lpthread -lz -llikwidhalide -L /home/hpc/iwia/iwia021h/libprofhalide
     FPIC=-fPIC
 ifeq ($(UNAME), Darwin)
     SHARED_EXT=dylib
@@ -51,8 +51,8 @@ endif
 SHELL = bash
 CXX ?= g++
 PREFIX ?= /usr/local
-# LLVM_CONFIG ?= llvm-config
-LLVM_CONFIG=/home/hpc/iwia/iwia021h/clang+llvm-10.0.0-x86_64-linux-gnu-ubuntu-18.04/bin/llvm-config
+LLVM_CONFIG ?= llvm-config
+# LLVM_CONFIG=/home/hpc/iwia/iwia021h/clang+llvm-10.0.0-x86_64-linux-gnu-ubuntu-18.04/bin/llvm-config
 LLVM_COMPONENTS= $(shell $(LLVM_CONFIG) --components)
 LLVM_VERSION = $(shell $(LLVM_CONFIG) --version | sed 's/\([0-9][0-9]*\)\.\([0-9]\).*/\1.\2/')
 
