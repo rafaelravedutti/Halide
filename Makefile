@@ -884,7 +884,7 @@ endif
 endif
 
 .PHONY: all
-all: distrib test_internal
+all: distrib #test_internal
 
 # Depending on which linker we're using,
 # we need a different invocation to get the
