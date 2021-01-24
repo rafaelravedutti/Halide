@@ -42,36 +42,39 @@ void profile_at(Func f, Var var, bool show_threads) {
 
 namespace Internal {
 
+enum MarkersType {
+    Marker_None,
+    Marker_Prod,
+    Marker_Cons,
+    Marker_Overhead,
+    Marker_Loop
+};
+
+struct InjectedMarkersData {
+    int type;  // none, prod, cons, overhead or loop
+    int id;    // id for function or loop
+};
+
+vector<InjectedMarkersData> injected_markers;
 vector<tuple<string, int, bool, string>> perfctr_profiler_defs;
 
 class InjectPerfCtrProfiling : public IRMutator {
 public:
-    string pipeline_name;
-    map<string, int> indices;   // maps from func name -> index in buffer.
-    map<string, int> loops;   // maps from loop name -> index in buffer.
-    map<int, int> show_threads_prod;   // maps from func int -> show threads in profiler in production level.
-    map<int, int> show_threads_cons;   // maps from func int -> show threads in profiler in consumption level.
-    map<int, int> show_threads_loop;   // maps from loop int -> show threads in profiler.
-    map<int, uint64_t> func_childrens; // map from func_id -> number of producer-consumer childrens
-    vector<int> stack; // What produce nodes are we currently inside of.
-    vector<pair<bool, bool>> profile_stack; // Produce node we are inside of must be profiled?
-
-    InjectPerfCtrProfiling(const string &pipeline_name) : pipeline_name(pipeline_name) {
+    map<string, int> indices;               // maps from func name -> index in buffer.
+    map<string, int> loops;                 // maps from loop name -> index in buffer.
+    map<int, int> show_threads_prod;        // maps from func int -> show threads in profiler in production level.
+    map<int, int> show_threads_cons;        // maps from func int -> show threads in profiler in consumption level.
+    map<int, int> show_threads_loop;        // maps from loop int -> show threads in profiler.
+    map<int, uint64_t> func_childrens;      // map from func_id -> number of producer-consumer childrens
+    vector<int> stack;                      // what produce nodes are we currently inside of.
+    vector<pair<bool, bool>> profile_stack; // does the produce node we are inside of must be profiled?
+    InjectPerfCtrProfiling() {
         indices["overhead"] = 0;
         stack.push_back(0);
     }
 
 private:
     using IRMutator::visit;
-
-    struct AllocSize {
-        bool on_stack;
-        Expr size;
-    };
-
-    Scope<AllocSize> func_alloc_sizes;
-
-    bool profiling_memory = true;
 
     // Strip down the tuple name, e.g. f.0 into f
     string normalize_name(const string &name) {
@@ -84,7 +87,7 @@ private:
         string norm_name = normalize_name(name);
         int idx = -1;
         map<string, int>::iterator iter = indices.find(norm_name);
-        if (iter == indices.end()) {
+        if(iter == indices.end()) {
             idx = (int)indices.size();
             indices[norm_name] = idx;
         } else {
@@ -96,10 +99,12 @@ private:
     Stmt visit(const ProducerConsumer *op) override {
         int idx;
         Stmt body, stmt;
+        std::string parent_name;
         bool must_profile = false;
         bool must_show_threads = false;
         int parent = (stack.size() > 1) ? stack.back() : 0;
-        std::string parent_name;
+        int imd_id = (int) injected_markers.size();
+        injected_markers.push_back({Marker_None, -1});
 
         for(auto& func: indices) {
             if(func.second == parent) {
@@ -150,31 +155,28 @@ private:
 
             if(op->is_producer && func_childrens[idx] > 0) {
 #ifdef INJECT_OVERHEAD_MARKERS
+                injected_markers[imd_id].type = Marker_Overhead;
+                injected_markers[imd_id].id = idx;
                 enter_task = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, idx}, Call::Extern);
                 leave_task = Call::make(Int(32), "halide_perfctr_leave_overhead_region", {profiler_state, profiler_token, idx}, Call::Extern);
                 body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
 #endif
             } else {
-                enter_task = Call::make(Int(32), "halide_perfctr_enter_func",
-                                        {profiler_state, profiler_token, get_func_id(op->name),
-                                         make_bool(op->is_producer)}, Call::Extern);
-                leave_task = Call::make(Int(32), "halide_perfctr_leave_func",
-                                        {profiler_state, profiler_token, get_func_id(op->name),
-                                         make_bool(op->is_producer)}, Call::Extern);
+                int id = get_func_id(op->name);
+                auto is_prod = make_bool(op->is_producer);
+                injected_markers[imd_id].type = op->is_producer ? Marker_Prod : Marker_Cons;
+                injected_markers[imd_id].id = id;
+                enter_task = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, is_prod}, Call::Extern);
+                leave_task = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, is_prod}, Call::Extern);
                 body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
             }
         }
 
-        // This call gets inlined and becomes a single store instruction.
-        /*
-        Expr set_task = Call::make(Int(32), "halide_perfctr_set_current_func",
-                                   {profiler_state, profiler_token, idx}, Call::Extern);
-
-        body = Block::make(Evaluate::make(set_task), body);
-        */
         stmt = ProducerConsumer::make(op->name, op->is_producer, body);
 
 #ifdef INJECT_OVERHEAD_MARKERS
+        // Since these are just markers to continue the parent's overhead region, they
+        // do not need to be tracked for parallel regions later (or maybe they do?)
         if(must_profile && !profile_stack.empty()) {
             int parent = stack.back();
             Expr enter_overhead = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, parent}, Call::Extern);
@@ -183,47 +185,41 @@ private:
         }
 #endif
 
-        auto fid = get_func_id(op->name);
-
+        int id = get_func_id(op->name);
         if(op->is_producer) {
-          show_threads_prod[fid] = must_show_threads;
+          show_threads_prod[id] = must_show_threads;
         } else {
-          show_threads_cons[fid] = must_show_threads;
+          show_threads_cons[id] = must_show_threads;
         }
 
         return stmt;
     }
 
     Stmt visit(const For *op) override {
-
         Stmt body = op->body;
-
-        // The for loop indicates a device transition or a
-        // parallel job launch. Decrement the number of active
-        // threads outside the loop, and increment it inside the
-        // body.
+        bool is_parallel_loop = (op->device_api == DeviceAPI::Hexagon || op->is_parallel());
         //bool update_active_threads = (op->device_api == DeviceAPI::Hexagon || op->is_parallel());
         bool update_active_threads = false;
+        int imd_id = (int) injected_markers.size();
+        injected_markers.push_back({Marker_None, -1});
+
         Expr state = Variable::make(Handle(), "profiler_state");
         Stmt enter_parallel_region = Evaluate::make(Call::make(Int(32), "halide_perfctr_enter_parallel_region", {state}, Call::Extern));
         Stmt leave_parallel_region = Evaluate::make(Call::make(Int(32), "halide_perfctr_leave_parallel_region", {state}, Call::Extern));
         Stmt incr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads", {state}, Call::Extern));
         Stmt decr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads", {state}, Call::Extern));
 
-        if (update_active_threads) {
+        if(update_active_threads) {
             body = Block::make({incr_active_threads, body, decr_active_threads});
         }
 
         // We profile by storing a token to global memory, so don't enter GPU loops
-        if (op->device_api == DeviceAPI::Hexagon) {
+        if(op->device_api == DeviceAPI::Hexagon) {
             // TODO: This is for all offload targets that support
             // limited internal profiling, which is currently just
             // hexagon. We don't support per-func stats remotely,
             // which means we can't do memory accounting.
-            bool old_profiling_memory = profiling_memory;
-            profiling_memory = false;
             body = mutate(body);
-            profiling_memory = old_profiling_memory;
 
             // Get the profiler state pointer from scratch inside the
             // kernel. There will be a separate copy of the state on
@@ -243,24 +239,28 @@ private:
             return starts_with(op->name, std::get<0>(elem) + ".") && ends_with(op->name, "." + std::get<1>(elem));
         });
 
-        if (it != perfctr_profiler_loops.end()) {
+        if(it != perfctr_profiler_loops.end()) {
             Expr profiler_token = Variable::make(Int(32), "profiler_token");
             Expr profiler_state = Variable::make(Handle(), "profiler_state");
             int loop_id = (int) loops.size();
 
-            Stmt enter_loop = Evaluate::make(Call::make(Int(32), "halide_perfctr_enter_loop",
-                                             {profiler_state, profiler_token, make_const(UInt(64), loop_id)}, Call::Extern));
+            injected_markers[imd_id].type = Marker_Loop;
+            injected_markers[imd_id].id = loop_id;
+            Expr enter_loop = Call::make(Int(32), "halide_perfctr_enter_loop", {profiler_state, profiler_token, loop_id}, Call::Extern);
+            Expr leave_loop = Call::make(Int(32), "halide_perfctr_leave_loop", {profiler_state, profiler_token, loop_id}, Call::Extern);
 
-            Stmt leave_loop = Evaluate::make(Call::make(Int(32), "halide_perfctr_leave_loop",
-                                             {profiler_state, profiler_token, make_const(UInt(64), loop_id)}, Call::Extern));
-
-            stmt = Block::make({enter_loop, stmt, leave_loop});
+            if(is_parallel_loop) {
+                body = Block::make({Evaluate::make(enter_loop), body, Evaluate::make(leave_loop)});
+                stmt = For::make(op->name, op->min, op->extent, op->for_type, op->device_api, body);
+            } else {
+                stmt = Block::make({Evaluate::make(enter_loop), stmt, Evaluate::make(leave_loop)});
+            }
 
             loops[op->name] = loop_id;
             show_threads_loop[loop_id] = std::get<2>(*it);
         }
 
-        if (update_active_threads) {
+        if(update_active_threads) {
             stmt = Block::make({decr_active_threads, enter_parallel_region, stmt, leave_parallel_region, incr_active_threads});
         }
 
@@ -268,16 +268,94 @@ private:
     }
 };
 
+class InjectPerfCtrParallelProfiling : public IRMutator {
+public:
+    InjectPerfCtrParallelProfiling() {
+        last_imd = 0;
+    }
+
+private:
+    vector<InjectedMarkersData> markers_stack;
+    int last_imd;
+    using IRMutator::visit;
+
+    Stmt visit(const ProducerConsumer *op) override {
+        Stmt body;
+        int imd_id = last_imd++;
+
+        if(injected_markers[imd_id].type != Marker_None) {
+            markers_stack.push_back(injected_markers[imd_id]);
+            body = mutate(op->body);
+            markers_stack.pop_back();
+        } else {
+            body = mutate(op->body);
+        }
+
+        Stmt stmt = ProducerConsumer::make(op->name, op->is_producer, body);
+        return stmt;
+    }
+
+    Stmt visit(const For *op) override {
+        Stmt stmt, body;
+        bool is_parallel_loop = (op->device_api == DeviceAPI::Hexagon || op->is_parallel());
+        int imd_id = last_imd++;
+
+        if(injected_markers[imd_id].type != Marker_None) {
+            markers_stack.push_back(injected_markers[imd_id]);
+            body = mutate(op->body);
+            markers_stack.pop_back();
+        } else {
+            body = mutate(op->body);
+        }
+
+        if(is_parallel_loop && injected_markers[imd_id].type == Marker_None && markers_stack.size() > 0) {
+            auto active_imd = markers_stack.back();
+            auto id = active_imd.id;
+            Expr profiler_token = Variable::make(Int(32), "profiler_token");
+            Expr profiler_state = Variable::make(Handle(), "profiler_state");
+            Expr enter_marker, leave_marker;
+
+            switch(active_imd.type) {
+                case Marker_Prod:
+                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, make_bool(true)}, Call::Extern);
+                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, make_bool(true)}, Call::Extern);
+                    break;
+                case Marker_Cons:
+                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, make_bool(false)}, Call::Extern);
+                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, make_bool(false)}, Call::Extern);
+                    break;
+                case Marker_Overhead:
+                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, id}, Call::Extern);
+                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_overhead_region", {profiler_state, profiler_token, id}, Call::Extern);
+                    break;
+                case Marker_Loop:
+                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_loop", {profiler_state, profiler_token, id}, Call::Extern);
+                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_loop", {profiler_state, profiler_token, id}, Call::Extern);
+                    break;
+            }
+
+            body = Block::make({Evaluate::make(enter_marker), body, Evaluate::make(leave_marker)});
+            stmt = For::make(op->name, op->min, op->extent, op->for_type, op->device_api, body);
+            stmt = Block::make({Evaluate::make(leave_marker), stmt, Evaluate::make(enter_marker)});
+        } else {
+            stmt = For::make(op->name, op->min, op->extent, op->for_type, op->device_api, body);
+        }
+
+        return stmt;
+    }
+};
+
 Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
-    InjectPerfCtrProfiling profiling(pipeline_name);
+    InjectPerfCtrProfiling profiling;
     s = profiling.mutate(s);
+    InjectPerfCtrParallelProfiling parallel_profiling;
+    s = parallel_profiling.mutate(s);
 
     int num_funcs = (int)(profiling.indices.size());
     int num_loops = (int)(profiling.loops.size());
 
     Expr func_names_buf = Variable::make(Handle(), "profiling_func_names");
     Expr loop_names_buf = Variable::make(Handle(), "profiling_loop_names");
-
     Expr func_threads_prod_buf = Variable::make(Handle(), "profiling_func_threads_prod");
     Expr func_threads_cons_buf = Variable::make(Handle(), "profiling_func_threads_cons");
     Expr loop_threads_buf = Variable::make(Handle(), "profiling_loop_threads");
@@ -291,11 +369,9 @@ Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
     Expr stop_profiler = Call::make(Handle(), Call::register_destructor, {Expr("halide_perfctr_pipeline_end"), get_state}, Call::Intrinsic);
     Expr profiler_state = Variable::make(Handle(), "profiler_state");
 
-    Stmt incr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads", {profiler_state}, Call::Extern));
-    Stmt decr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads", {profiler_state}, Call::Extern));
-    Stmt init_threads_loop = For::make("init_th", 0, 100, ForType::Parallel, DeviceAPI::Host, Block::make({incr_active_threads, decr_active_threads}));
-    s = Block::make({init_threads_loop, s});
-    //s = Block::make({init_threads_loop, incr_active_threads, s, decr_active_threads});
+    //Stmt incr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads", {profiler_state}, Call::Extern));
+    //Stmt decr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads", {profiler_state}, Call::Extern));
+    //s = Block::make({incr_active_threads, s, decr_active_threads});
     s = LetStmt::make("profiler_pipeline_state", get_pipeline_state, s);
     s = LetStmt::make("profiler_state", get_state, s);
 
