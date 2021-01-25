@@ -13,32 +13,12 @@
 #include "Util.h"
 #include "Func.h"
 
-//#define INJECT_OVERHEAD_MARKERS
-
 namespace Halide {
 
 using std::map;
 using std::pair;
 using std::string;
-using std::tuple;
 using std::vector;
-
-vector<tuple<string, string, bool>> perfctr_profiler_loops;
-
-void profile_at(LoopLevel loop_level, bool show_threads) {
-    auto locked_loop_level = loop_level.lock();
-    perfctr_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
-}
-
-void profile_at(Func f, RVar var, bool show_threads) {
-    auto locked_loop_level = LoopLevel(f, var).lock();
-    perfctr_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
-}
-
-void profile_at(Func f, Var var, bool show_threads) {
-    auto locked_loop_level = LoopLevel(f, var).lock();
-    perfctr_profiler_loops.push_back(std::make_tuple(locked_loop_level.func(), locked_loop_level.var().name(), show_threads));
-}
 
 namespace Internal {
 
@@ -55,8 +35,30 @@ struct InjectedMarkersData {
     int id;    // id for function or loop
 };
 
+struct PerfCtrLoopData {
+    string loop_name;   // loop name
+    string var_name;    // variable name
+    bool show_threads;  // show threads
+};
+
 vector<InjectedMarkersData> injected_markers;
-vector<tuple<string, int, bool, string>> perfctr_profiler_defs;
+vector<PerfCtrFuncData> perfctr_funcs_to_profile;
+vector<PerfCtrLoopData> perfctr_loops_to_profile;
+
+void internal_profile_at(LoopLevel loop_level, bool show_threads) {
+    auto locked_loop_level = loop_level.lock();
+    perfctr_loops_to_profile.push_back({locked_loop_level.func(), locked_loop_level.var().name(), show_threads});
+}
+
+void internal_profile_at(Func f, RVar var, bool show_threads) {
+    auto locked_loop_level = LoopLevel(f, var).lock();
+    perfctr_loops_to_profile.push_back({locked_loop_level.func(), locked_loop_level.var().name(), show_threads});
+}
+
+void internal_profile_at(Func f, Var var, bool show_threads) {
+    auto locked_loop_level = LoopLevel(f, var).lock();
+    perfctr_loops_to_profile.push_back({locked_loop_level.func(), locked_loop_level.var().name(), show_threads});
+}
 
 class InjectPerfCtrProfiling : public IRMutator {
 public:
@@ -102,7 +104,9 @@ private:
         std::string parent_name;
         bool must_profile = false;
         bool must_show_threads = false;
+        bool inject_overhead_markers = false;
         int parent = (stack.size() > 1) ? stack.back() : 0;
+        int func_id = get_func_id(op->name);
         int imd_id = (int) injected_markers.size();
         injected_markers.push_back({Marker_None, -1});
 
@@ -112,22 +116,22 @@ private:
             }
         }
 
-        auto it = find_if(perfctr_profiler_defs.begin(), perfctr_profiler_defs.end(),
-                          [op, parent_name](std::tuple<string, int, bool, string> const &elem) {
-            bool level_cond = (std::get<1>(elem) & PROFILE_PRODUCTION && op->is_producer) || (std::get<1>(elem) & PROFILE_CONSUMPTION && !op->is_producer);
-            bool parent_cond = (std::get<3>(elem) == "") || (std::get<3>(elem) == parent_name);
-            return std::get<0>(elem) == op->name && level_cond && parent_cond;
+        auto it = find_if(perfctr_funcs_to_profile.begin(), perfctr_funcs_to_profile.end(),
+                          [op, parent_name](PerfCtrFuncData const &elem) {
+            bool level_cond = (elem.level & PROFILE_PRODUCTION && op->is_producer) || (elem.level & PROFILE_CONSUMPTION && !op->is_producer);
+            bool parent_cond = (elem.parent_name == "") || (elem.parent_name == parent_name);
+            return elem.func_name == op->name && level_cond && parent_cond;
         });
 
-        must_profile = it != perfctr_profiler_defs.end() && std::get<2>(*it);
-        must_show_threads = must_profile && std::get<1>(*it) & PROFILE_SHOW_THREADS;
+        must_profile = it != perfctr_funcs_to_profile.end() && it->enable;
+        must_show_threads = must_profile && (it->level & PROFILE_SHOW_THREADS);
 
         if(stack.size() > 1) {
             func_childrens[stack.back()]++;
         }
 
         if (op->is_producer) {
-            idx = get_func_id(op->name);
+            idx = func_id;
             func_childrens[idx] = 0;
 
             profile_stack.push_back(std::make_pair(must_profile, must_show_threads));
@@ -142,7 +146,7 @@ private:
             idx = stack.back();
         }
 
-        if(!must_profile && it == perfctr_profiler_defs.end() && profile_stack.back().first) {
+        if(!must_profile && it == perfctr_funcs_to_profile.end() && profile_stack.back().first) {
             must_profile = true;
             must_show_threads = profile_stack.back().second;
         }
@@ -154,42 +158,38 @@ private:
             Expr enter_task, leave_task;
 
             if(op->is_producer && func_childrens[idx] > 0) {
-#ifdef INJECT_OVERHEAD_MARKERS
-                injected_markers[imd_id].type = Marker_Overhead;
-                injected_markers[imd_id].id = idx;
-                enter_task = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, idx}, Call::Extern);
-                leave_task = Call::make(Int(32), "halide_perfctr_leave_overhead_region", {profiler_state, profiler_token, idx}, Call::Extern);
-                body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
-#endif
+                if(inject_overhead_markers) {
+                    injected_markers[imd_id].type = Marker_Overhead;
+                    injected_markers[imd_id].id = idx;
+                    enter_task = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, idx}, Call::Extern);
+                    leave_task = Call::make(Int(32), "halide_perfctr_leave_overhead_region", {profiler_state, profiler_token, idx}, Call::Extern);
+                    body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
+                }
             } else {
-                int id = get_func_id(op->name);
                 auto is_prod = make_bool(op->is_producer);
                 injected_markers[imd_id].type = op->is_producer ? Marker_Prod : Marker_Cons;
-                injected_markers[imd_id].id = id;
-                enter_task = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, is_prod}, Call::Extern);
-                leave_task = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, is_prod}, Call::Extern);
+                injected_markers[imd_id].id = func_id;
+                enter_task = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, func_id, is_prod}, Call::Extern);
+                leave_task = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, func_id, is_prod}, Call::Extern);
                 body = Block::make({Evaluate::make(enter_task), body, Evaluate::make(leave_task)});
             }
         }
 
         stmt = ProducerConsumer::make(op->name, op->is_producer, body);
 
-#ifdef INJECT_OVERHEAD_MARKERS
         // Since these are just markers to continue the parent's overhead region, they
         // do not need to be tracked for parallel regions later (or maybe they do?)
-        if(must_profile && !profile_stack.empty()) {
+        if(inject_overhead_markers && must_profile && !profile_stack.empty()) {
             int parent = stack.back();
             Expr enter_overhead = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, parent}, Call::Extern);
             Expr leave_overhead = Call::make(Int(32), "halide_perfctr_leave_overhead_region", {profiler_state, profiler_token, parent}, Call::Extern);
             stmt = Block::make({Evaluate::make(leave_overhead), stmt, Evaluate::make(enter_overhead)});
         }
-#endif
 
-        int id = get_func_id(op->name);
         if(op->is_producer) {
-          show_threads_prod[id] = must_show_threads;
+          show_threads_prod[func_id] = must_show_threads;
         } else {
-          show_threads_cons[id] = must_show_threads;
+          show_threads_cons[func_id] = must_show_threads;
         }
 
         return stmt;
@@ -198,20 +198,8 @@ private:
     Stmt visit(const For *op) override {
         Stmt body = op->body;
         bool is_parallel_loop = (op->device_api == DeviceAPI::Hexagon || op->is_parallel());
-        //bool update_active_threads = (op->device_api == DeviceAPI::Hexagon || op->is_parallel());
-        bool update_active_threads = false;
         int imd_id = (int) injected_markers.size();
         injected_markers.push_back({Marker_None, -1});
-
-        Expr state = Variable::make(Handle(), "profiler_state");
-        Stmt enter_parallel_region = Evaluate::make(Call::make(Int(32), "halide_perfctr_enter_parallel_region", {state}, Call::Extern));
-        Stmt leave_parallel_region = Evaluate::make(Call::make(Int(32), "halide_perfctr_leave_parallel_region", {state}, Call::Extern));
-        Stmt incr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads", {state}, Call::Extern));
-        Stmt decr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads", {state}, Call::Extern));
-
-        if(update_active_threads) {
-            body = Block::make({incr_active_threads, body, decr_active_threads});
-        }
 
         // We profile by storing a token to global memory, so don't enter GPU loops
         if(op->device_api == DeviceAPI::Hexagon) {
@@ -235,15 +223,14 @@ private:
         }
 
         Stmt stmt = For::make(op->name, op->min, op->extent, op->for_type, op->device_api, body);
-        auto it = find_if(perfctr_profiler_loops.begin(), perfctr_profiler_loops.end(), [op](std::tuple<string, string, bool> const &elem) {
-            return starts_with(op->name, std::get<0>(elem) + ".") && ends_with(op->name, "." + std::get<1>(elem));
+        auto it = find_if(perfctr_loops_to_profile.begin(), perfctr_loops_to_profile.end(), [op](PerfCtrLoopData const &elem) {
+            return starts_with(op->name, elem.loop_name + ".") && ends_with(op->name, "." + elem.var_name);
         });
 
-        if(it != perfctr_profiler_loops.end()) {
+        if(it != perfctr_loops_to_profile.end()) {
             Expr profiler_token = Variable::make(Int(32), "profiler_token");
             Expr profiler_state = Variable::make(Handle(), "profiler_state");
             int loop_id = (int) loops.size();
-
             injected_markers[imd_id].type = Marker_Loop;
             injected_markers[imd_id].id = loop_id;
             Expr enter_loop = Call::make(Int(32), "halide_perfctr_enter_loop", {profiler_state, profiler_token, loop_id}, Call::Extern);
@@ -257,11 +244,7 @@ private:
             }
 
             loops[op->name] = loop_id;
-            show_threads_loop[loop_id] = std::get<2>(*it);
-        }
-
-        if(update_active_threads) {
-            stmt = Block::make({decr_active_threads, enter_parallel_region, stmt, leave_parallel_region, incr_active_threads});
+            show_threads_loop[loop_id] = it->show_threads;
         }
 
         return stmt;
@@ -369,9 +352,6 @@ Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
     Expr stop_profiler = Call::make(Handle(), Call::register_destructor, {Expr("halide_perfctr_pipeline_end"), get_state}, Call::Intrinsic);
     Expr profiler_state = Variable::make(Handle(), "profiler_state");
 
-    //Stmt incr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_incr_active_threads", {profiler_state}, Call::Extern));
-    //Stmt decr_active_threads = Evaluate::make(Call::make(Int(32), "halide_perfctr_decr_active_threads", {profiler_state}, Call::Extern));
-    //s = Block::make({incr_active_threads, s, decr_active_threads});
     s = LetStmt::make("profiler_pipeline_state", get_pipeline_state, s);
     s = LetStmt::make("profiler_state", get_state, s);
 
@@ -416,4 +396,9 @@ Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
 }
 
 }
+
+void profile_at(LoopLevel loop_level, bool show_threads) { Internal::internal_profile_at(loop_level, show_threads); }
+void profile_at(Func f, RVar var, bool show_threads) { Internal::internal_profile_at(f, var, show_threads); }
+void profile_at(Func f, Var var, bool show_threads) { Internal::internal_profile_at(f, var, show_threads); }
+
 }

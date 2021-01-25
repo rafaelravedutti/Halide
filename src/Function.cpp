@@ -30,7 +30,7 @@ typedef map<FunctionPtr, FunctionPtr> DeepCopyMap;
 
 struct FunctionContents;
 
-extern std::vector<std::tuple<std::string, int, bool, std::string>> perfctr_profiler_defs;
+extern std::vector<PerfCtrFuncData> perfctr_funcs_to_profile;
 
 namespace {
 // Weaken all the references to a particular Function to break
@@ -943,14 +943,14 @@ void Function::profile(int level, bool show_threads, bool enable) {
         level |= PROFILE_SHOW_THREADS;
     }
 
-    perfctr_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, ""));
+    perfctr_funcs_to_profile.push_back({contents->name, "", level, enable});
 }
 void Function::profile_in(Function &parent, int level, bool show_threads, bool enable) {
     if(show_threads) {
         level |= PROFILE_SHOW_THREADS;
     }
 
-    perfctr_profiler_defs.push_back(std::make_tuple(contents->name, level, enable, parent.name()));
+    perfctr_funcs_to_profile.push_back({contents->name, parent.name(), level, enable});
 }
 
 void Function::freeze() {

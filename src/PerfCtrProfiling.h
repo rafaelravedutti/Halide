@@ -1,5 +1,5 @@
-#ifndef HALIDE_PERF_HALIDE_H
-#define HALIDE_PERF_HALIDE_H
+#ifndef HALIDE_PERFCTR_HALIDE_H
+#define HALIDE_PERFCTR_HALIDE_H
 
 /** \file
  * Defines the lowering pass that injects print statements when profiling is turned on.
@@ -42,6 +42,13 @@ void profile_at(Func f, RVar var, bool show_threads);
 void profile_at(Func f, Var var, bool show_threads);
 
 namespace Internal {
+
+struct PerfCtrFuncData {
+    std::string func_name;      // function name
+    std::string parent_name;    // parent name
+    int level;                  // level (prod/cons/both/show_threads)
+    bool enable;                // directive is to enable or disable?
+};
 
 /** Take a statement representing a halide pipeline insert
  * high-resolution timing into the generated code (via spawning a

@@ -623,7 +623,7 @@ WEAK __attribute__((always_inline)) int halide_perfctr_leave_func(halide_perfctr
   return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_enter_loop(halide_perfctr_state *state, int tok, uint64_t id) {
+WEAK __attribute__((always_inline)) int halide_perfctr_enter_loop(halide_perfctr_state *state, int tok, int id) {
   halide_perfctr_loop_stats *ls = current_pipeline_stats->loops + id;
 
   if((ls->iterations % PROFILE_GRANULARITY) == 0) {
@@ -637,7 +637,7 @@ WEAK __attribute__((always_inline)) int halide_perfctr_enter_loop(halide_perfctr
   return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_leave_loop(halide_perfctr_state *state, int tok, uint64_t id) {
+WEAK __attribute__((always_inline)) int halide_perfctr_leave_loop(halide_perfctr_state *state, int tok, int id) {
   halide_perfctr_loop_stats *ls = current_pipeline_stats->loops + id;
 
   if((ls->iterations % PROFILE_GRANULARITY) == 0) {
