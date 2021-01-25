@@ -99,12 +99,12 @@ private:
     }
 
     Stmt visit(const ProducerConsumer *op) override {
-        int idx;
         Stmt body, stmt;
-        std::string parent_name;
+        string parent_name;
         bool must_profile = false;
         bool must_show_threads = false;
         bool inject_overhead_markers = false;
+        int idx = -1;
         int parent = (stack.size() > 1) ? stack.back() : 0;
         int func_id = get_func_id(op->name);
         int imd_id = (int) injected_markers.size();
@@ -116,8 +116,7 @@ private:
             }
         }
 
-        auto it = find_if(perfctr_funcs_to_profile.begin(), perfctr_funcs_to_profile.end(),
-                          [op, parent_name](PerfCtrFuncData const &elem) {
+        auto it = find_if(perfctr_funcs_to_profile.begin(), perfctr_funcs_to_profile.end(), [op, parent_name](PerfCtrFuncData const &elem) {
             bool level_cond = (elem.level & PROFILE_PRODUCTION && op->is_producer) || (elem.level & PROFILE_CONSUMPTION && !op->is_producer);
             bool parent_cond = (elem.parent_name == "") || (elem.parent_name == parent_name);
             return elem.func_name == op->name && level_cond && parent_cond;
@@ -156,7 +155,6 @@ private:
 
         if(must_profile) {
             Expr enter_task, leave_task;
-
             if(op->is_producer && func_childrens[idx] > 0) {
                 if(inject_overhead_markers) {
                     injected_markers[imd_id].type = Marker_Overhead;
@@ -296,16 +294,14 @@ private:
             auto id = active_imd.id;
             Expr profiler_token = Variable::make(Int(32), "profiler_token");
             Expr profiler_state = Variable::make(Handle(), "profiler_state");
-            Expr enter_marker, leave_marker;
+            Expr enter_marker, leave_marker, is_prod;
 
             switch(active_imd.type) {
                 case Marker_Prod:
-                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, make_bool(true)}, Call::Extern);
-                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, make_bool(true)}, Call::Extern);
-                    break;
                 case Marker_Cons:
-                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, make_bool(false)}, Call::Extern);
-                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, make_bool(false)}, Call::Extern);
+                    is_prod = active_imd.type == Marker_Prod ? make_bool(true) : make_bool(false);
+                    enter_marker = Call::make(Int(32), "halide_perfctr_enter_func", {profiler_state, profiler_token, id, is_prod}, Call::Extern);
+                    leave_marker = Call::make(Int(32), "halide_perfctr_leave_func", {profiler_state, profiler_token, id, is_prod}, Call::Extern);
                     break;
                 case Marker_Overhead:
                     enter_marker = Call::make(Int(32), "halide_perfctr_enter_overhead_region", {profiler_state, profiler_token, id}, Call::Extern);
@@ -352,6 +348,32 @@ Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
     Expr stop_profiler = Call::make(Handle(), Call::register_destructor, {Expr("halide_perfctr_pipeline_end"), get_state}, Call::Intrinsic);
     Expr profiler_state = Variable::make(Handle(), "profiler_state");
 
+    vector<pair<int, int>> registered_markers;
+    for(auto im: injected_markers) {
+        if(im.type != Marker_None) {
+            auto markers_cmp = [im](pair<int, int> const &m) { return m.first == im.type && m.second == im.id; };
+            if(find_if(registered_markers.begin(), registered_markers.end(), markers_cmp) == registered_markers.end()) {
+                Expr reg_func, is_prod;
+                switch(im.type) {
+                    case Marker_Prod:
+                    case Marker_Cons:
+                        is_prod = im.type == Marker_Prod ? make_bool(true) : make_bool(false);
+                        reg_func = Call::make(Int(32), "halide_perfctr_register_func", {profiler_state, profiler_token, im.id, is_prod}, Call::Extern);
+                        break;
+                    case Marker_Overhead:
+                        reg_func = Call::make(Int(32), "halide_perfctr_register_overhead_region", {profiler_state, profiler_token, im.id}, Call::Extern);
+                        break;
+                    case Marker_Loop:
+                        reg_func = Call::make(Int(32), "halide_perfctr_register_loop", {profiler_state, profiler_token, im.id}, Call::Extern);
+                        break;
+                }
+
+                s = Block::make(Evaluate::make(reg_func), s);
+                registered_markers.push_back(std::make_pair(im.type, im.id));
+            }
+        }
+    }
+
     s = LetStmt::make("profiler_pipeline_state", get_pipeline_state, s);
     s = LetStmt::make("profiler_state", get_state, s);
 
@@ -361,23 +383,23 @@ Stmt inject_perfctr_profiling(Stmt s, string pipeline_name) {
     s = Block::make(AssertStmt::make(profiler_token >= 0, profiler_token), s);
     s = LetStmt::make("profiler_token", start_profiler, s);
 
-    for (std::pair<string, int> p : profiling.indices) {
+    for(auto const& p : profiling.indices) {
         s = Block::make(Store::make("profiling_func_names", p.first, p.second, Parameter(), const_true(), ModulusRemainder()), s);
     }
 
-    for (std::pair<string, int> p : profiling.loops) {
+    for(auto const& p : profiling.loops) {
         s = Block::make(Store::make("profiling_loop_names", p.first, p.second, Parameter(), const_true(), ModulusRemainder()), s);
     }
 
-    for (std::pair<int, int> p : profiling.show_threads_prod) {
+    for(auto const& p : profiling.show_threads_prod) {
         s = Block::make(Store::make("profiling_func_threads_prod", p.second, p.first, Parameter(), const_true(), ModulusRemainder()), s);
     }
 
-    for (std::pair<int, int> p : profiling.show_threads_cons) {
+    for(auto const& p : profiling.show_threads_cons) {
         s = Block::make(Store::make("profiling_func_threads_cons", p.second, p.first, Parameter(), const_true(), ModulusRemainder()), s);
     }
 
-    for (std::pair<int, int> p : profiling.show_threads_loop) {
+    for(auto const& p : profiling.show_threads_loop) {
         s = Block::make(Store::make("profiling_loop_threads", p.second, p.first, Parameter(), const_true(), ModulusRemainder()), s);
     }
 
