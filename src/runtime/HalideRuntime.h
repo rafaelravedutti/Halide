@@ -1848,29 +1848,11 @@ struct halide_perfctr_func_stats {
     /** The name of this Func. A global constant string. */
     const char *name;
 
-    /** The average number of thread pool worker threads active while computing this Func. */
-    uint64_t active_threads_numerator, active_threads_denominator;
-
     /** Markers for production and consumption stages */
     char marker[2][128];
 
-    /** Event counters */
-    long long int event_counters[2][32][128];
-
-    /** Event counter has been used? */
-    int counter_used[2][32];
-
     /** Marker for overhead stage */
     char overhead_marker[128];
-
-    /** Overhead event counters */
-    long long int overhead_counters[32][128];
-
-    /** Overhead event counter has been used? */
-    int overhead_counter_used[32];
-
-    /** Show threads in production level */
-    bool show_threads_prod, show_threads_cons;
 
     /** Iteration counters */
     uint64_t iterations[2];
@@ -1886,15 +1868,6 @@ struct halide_perfctr_loop_stats {
     /** The marker of this Loop. */
     const char *marker;
 
-    /** Show threads */
-    bool show_threads;
-
-    /** Loop event counters */
-    long long int loop_counters[32][128];
-
-    /** Loop event counter has been used? */
-    int loop_counter_used[32];
-
     /** Iteration counter */
     uint64_t iterations;
 };
@@ -1902,10 +1875,6 @@ struct halide_perfctr_loop_stats {
 struct halide_perfctr_pipeline_stats {
     /** Total time taken evaluating this pipeline (in nanoseconds). */
     uint64_t time;
-
-    /** The average number of thread pool worker threads doing useful
-     * work while computing this pipeline. */
-    uint64_t active_threads_numerator, active_threads_denominator;
 
     /** The name of this pipeline. A global constant string. */
     const char *name;
@@ -1938,15 +1907,6 @@ struct halide_perfctr_pipeline_stats {
 
 /** Structure for the PERFCTR profiler */
 struct halide_perfctr_state {
-    /** Guards access to the fields below. If not locked, the sampling
-     * profiler thread is free to modify things below (including
-     * reordering the linked list of pipeline stats). */
-    struct halide_mutex lock;
-
-    /** The amount of time the profiler thread sleeps between samples
-     * in milliseconds. Defaults to 1 */
-    int sleep_time;
-
     /** An internal id used for bookkeeping. */
     int first_free_id;
 
@@ -1954,35 +1914,13 @@ struct halide_perfctr_state {
      * periodically by the profiler thread. */
     int current_func;
 
-    /** The number of threads currently doing work. */
-    int active_threads;
-
     /** A linked list of stats gathered for each pipeline. */
     struct halide_perfctr_pipeline_stats *pipelines;
-
-    /** Retrieve remote profiler state. Used so that the sampling
-     * profiler can follow along with execution that occurs elsewhere,
-     * e.g. on a DSP. If null, it reads from the int above instead. */
-    void (*get_remote_profiler_state)(int *func, int *active_workers);
-
-    /** Sampling thread reference to be joined at shutdown. */
-    struct halide_thread *sampling_thread;
 };
 
 /** Get a pointer to the global PERFCTR profiler state for programmatic
  * inspection. Lock it before using to pause the profiler. */
 extern struct halide_perfctr_state *halide_perfctr_get_state();
-
-/** Profiler func ids with special meanings. */
-enum {
-    /// current_func takes on this value when not inside Halide code
-    halide_perfctr_outside_of_halide = -1,
-    /// Set current_func to this value to tell the profiling thread to
-    /// halt. It will start up again next time you run a pipeline with
-    /// profiling enabled.
-    halide_perfctr_please_stop = -2
-};
-
 extern struct halide_perfctr_pipeline_stats *halide_perfctr_get_pipeline_state(const char *pipeline_name);
 extern void halide_perfctr_reset();
 void halide_perfctr_shutdown();

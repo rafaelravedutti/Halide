@@ -5,9 +5,6 @@
 
 #define PROFILE_GRANULARITY   1
 
-// Likwid manage the event counters and threads by itself
-#define USE_LIKWID
-
 extern "C" {
 
 #ifndef NULL
@@ -17,11 +14,6 @@ extern "C" {
 namespace Halide { namespace Runtime { namespace Internal {
 
 static halide_perfctr_pipeline_stats *current_pipeline_stats = NULL;
-
-#ifndef USE_LIKWID
-static long long int (*last_counters)[32][128];
-static int (*last_counters_used)[32];
-#endif
 
 /*
 WEAK void bill_func(halide_perfctr_state *s, int func_id, uint64_t time, int active_threads) {
@@ -93,8 +85,8 @@ WEAK void sampling_profiler_thread(void *) {
 
 // Returns the address of the global halide_perfctr state
 WEAK halide_perfctr_state *halide_perfctr_get_state() {
-  static halide_perfctr_state s = {{{0}}, 1, 0, 0, 0, 0, NULL, NULL};
-  return &s;
+    static halide_perfctr_state s = {0, 0, NULL};
+    return &s;
 }
 
 WEAK int halide_perfctr_pipeline_start(
@@ -130,8 +122,6 @@ WEAK int halide_perfctr_pipeline_start(
         p->runs = 0;
         p->time = 0;
         p->samples = 0;
-        p->active_threads_numerator = 0;
-        p->active_threads_denominator = 0;
         p->funcs = (halide_perfctr_func_stats *) malloc(num_funcs * sizeof(halide_perfctr_func_stats));
         p->loops = NULL;
 
@@ -139,14 +129,11 @@ WEAK int halide_perfctr_pipeline_start(
             for(int i = 0; i < num_funcs; ++i) {
                 p->funcs[i].time = 0;
                 p->funcs[i].name = (const char *)(func_names[i]);
-                p->funcs[i].active_threads_numerator = 0;
-                p->funcs[i].active_threads_denominator = 0;
-                p->funcs[i].show_threads_prod = (bool)(func_show_threads_prod[i]);
-                p->funcs[i].show_threads_cons = (bool)(func_show_threads_cons[i]);
                 p->funcs[i].overhead_iterations = 0;
 
                 for(int l = 0; l < 2; ++l) {
                     int j;
+
                     p->funcs[i].clock_start[l] = 0;
                     p->funcs[i].clock_accum[l] = 0;
                     p->funcs[i].iterations[l] = 0;
@@ -173,16 +160,6 @@ WEAK int halide_perfctr_pipeline_start(
                     j++;
                     p->funcs[i].marker[l][j] = '\0';
                     p->funcs[i].overhead_marker[j] = '\0';
-
-                    for(int t = 0; t < MAX_PERFCTR_THREADS; ++t) {
-                        p->funcs[i].counter_used[l][t] = 0;
-                        p->funcs[i].overhead_counter_used[t] = 0;
-
-                        for(int e = 0; e < MAX_PERFCTR_DESCRIPTORS; ++e) {
-                            p->funcs[i].overhead_counters[t][e] = 0;
-                            p->funcs[i].event_counters[l][t][e] = 0;
-                        }
-                    }
                 }
             }
         }
@@ -193,15 +170,7 @@ WEAK int halide_perfctr_pipeline_start(
                 for(int i = 0; i < num_loops; ++i) {
                     p->loops[i].name = (const char *)(loop_names[i]);
                     p->loops[i].marker = (const char *)(loop_names[i]);
-                    p->loops[i].show_threads = (bool)(loop_show_threads[i]);
                     p->loops[i].iterations = 0;
-
-                    for(int t = 0; t < MAX_PERFCTR_THREADS; ++t) {
-                        p->loops[i].loop_counter_used[t] = 0;
-                        for(int e = 0; e < MAX_PERFCTR_DESCRIPTORS; ++e) {
-                            p->loops[i].loop_counters[t][e] = 0;
-                        }
-                    }
                 }
             }
         }
@@ -233,7 +202,6 @@ WEAK int halide_perfctr_pipeline_start(
     s->sampling_thread = halide_spawn_thread(sampling_profiler_thread, NULL);
     }
     */
-    s->sampling_thread = NULL;
     p->runs++;
 
     current_pipeline_stats = p;
@@ -569,58 +537,33 @@ __attribute__((destructor))  WEAK void halide_perfctr_shutdown() {
 }
 
 WEAK void halide_perfctr_pipeline_end(void *user_context, void *state) {
-    //((halide_profiler_state *)state)->current_func = halide_profiler_outside_of_halide;
     halide_perfctr_shutdown();
     current_pipeline_stats = NULL;
 }
 
-/*
-WEAK __attribute__((always_inline)) int halide_perfctr_set_current_func(halide_perfctr_state *state, int tok, int t) {
-  // Use empty volatile asm blocks to prevent code motion. Otherwise
-  // llvm reorders or elides the stores.
-  volatile int *ptr = &(state->current_func);
-  asm volatile ("":::);
-  *ptr = tok + t;
-  asm volatile ("":::);
-  return 0;
-}
-*/
-
-WEAK __attribute__((always_inline)) int halide_perfctr_register_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
-    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
+WEAK __attribute__((always_inline)) int halide_perfctr_register_func(halide_perfctr_state *state, int tok, int func, bool is_producer) {
+    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + func;
     int level = is_producer ? 0 : 1;
-    perfctr_halide_marker_register(fs->marker[level]);
+    perfctr_halide_marker_register(fs->marker[level], func, level);
     return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_enter_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
-    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
+WEAK __attribute__((always_inline)) int halide_perfctr_enter_func(halide_perfctr_state *state, int tok, int func, bool is_producer) {
+    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + func;
     int level = is_producer ? 0 : 1;
 
     if((fs->iterations[level] % PROFILE_GRANULARITY) == 0) {
-#ifndef USE_LIKWID
-        last_counters = &(fs->event_counters[level]);
-        last_counters_used = &(fs->counter_used[level]);
-#endif
-        perfctr_halide_marker_start(fs->marker[level]);
+        perfctr_halide_marker_start(fs->marker[level], func, level);
     }
 
     return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_leave_func(halide_perfctr_state *state, int tok, int t, bool is_producer) {
-    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
+WEAK __attribute__((always_inline)) int halide_perfctr_leave_func(halide_perfctr_state *state, int tok, int func, bool is_producer) {
+    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + func;
     int level = is_producer ? 0 : 1;
-
     if((fs->iterations[level] % PROFILE_GRANULARITY) == 0) {
-#ifndef USE_LIKWID
-        int thread_idx = perfctr_halide_get_thread_index();
-        perfctr_halide_marker_stop(fs->marker[level], fs->event_counters[level][thread_idx], 1);
-        fs->counter_used[level][thread_idx] = 1;
-        last_counters = NULL;
-#else
-        perfctr_halide_marker_stop(fs->marker[level], NULL, 1);
-#endif
+        perfctr_halide_marker_stop(fs->marker[level], func, level);
     }
 
     fs->iterations[level]++;
@@ -629,19 +572,14 @@ WEAK __attribute__((always_inline)) int halide_perfctr_leave_func(halide_perfctr
 
 WEAK __attribute__((always_inline)) int halide_perfctr_register_loop(halide_perfctr_state *state, int tok, int id) {
     halide_perfctr_loop_stats *ls = current_pipeline_stats->loops + id;
-    perfctr_halide_marker_register(ls->marker);
+    perfctr_halide_marker_register(ls->marker, id, 2);
     return 0;
 }
 
 WEAK __attribute__((always_inline)) int halide_perfctr_enter_loop(halide_perfctr_state *state, int tok, int id) {
     halide_perfctr_loop_stats *ls = current_pipeline_stats->loops + id;
-
     if((ls->iterations % PROFILE_GRANULARITY) == 0) {
-#ifndef USE_LIKWID
-        last_counters = &(ls->loop_counters);
-        last_counters_used = &(ls->loop_counter_used);
-#endif
-        perfctr_halide_marker_start(ls->marker);
+        perfctr_halide_marker_start(ls->marker, id, 2);
     }
 
     return 0;
@@ -649,101 +587,36 @@ WEAK __attribute__((always_inline)) int halide_perfctr_enter_loop(halide_perfctr
 
 WEAK __attribute__((always_inline)) int halide_perfctr_leave_loop(halide_perfctr_state *state, int tok, int id) {
     halide_perfctr_loop_stats *ls = current_pipeline_stats->loops + id;
-
     if((ls->iterations % PROFILE_GRANULARITY) == 0) {
-#ifndef USE_LIKWID
-        int thread_idx = perfctr_halide_get_thread_index();
-        perfctr_halide_marker_stop(ls->marker, ls->loop_counters[thread_idx], 1);
-        ls->loop_counter_used[thread_idx] = 1;
-        last_counters = NULL;
-#else
-        perfctr_halide_marker_stop(ls->marker, NULL, 1);
-#endif
+        perfctr_halide_marker_stop(ls->marker, id, 2);
     }
 
     ls->iterations++;
     return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_register_overhead_region(halide_perfctr_state *state, int tok, int t) {
-    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
-    perfctr_halide_marker_register(fs->overhead_marker);
+WEAK __attribute__((always_inline)) int halide_perfctr_register_overhead_region(halide_perfctr_state *state, int tok, int func) {
+    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + func;
+    perfctr_halide_marker_register(fs->overhead_marker, func, 3);
     return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_enter_overhead_region(halide_perfctr_state *state, int tok, int t) {
-    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
-
+WEAK __attribute__((always_inline)) int halide_perfctr_enter_overhead_region(halide_perfctr_state *state, int tok, int func) {
+    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + func;
     if((fs->overhead_iterations % PROFILE_GRANULARITY) == 0) {
-#ifndef USE_LIKWID
-        last_counters = &(fs->overhead_counters);
-        last_counters_used = &(fs->overhead_counter_used);
-#endif
-        perfctr_halide_marker_start(fs->overhead_marker);
+        perfctr_halide_marker_start(fs->overhead_marker, func, 3);
     }
 
     return 0;
 }
 
-WEAK __attribute__((always_inline)) int halide_perfctr_leave_overhead_region(halide_perfctr_state *state, int tok, int t) {
-    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + t;
-
+WEAK __attribute__((always_inline)) int halide_perfctr_leave_overhead_region(halide_perfctr_state *state, int tok, int func) {
+    halide_perfctr_func_stats *fs = current_pipeline_stats->funcs + func;
     if((fs->overhead_iterations % PROFILE_GRANULARITY) == 0) {
-#ifndef USE_LIKWID
-        int thread_idx = perfctr_halide_get_thread_index();
-        perfctr_halide_marker_stop(fs->overhead_marker, fs->overhead_counters[thread_idx], 1);
-        fs->overhead_counter_used[thread_idx] = 1;
-        last_counters = NULL;
-#else
-        perfctr_halide_marker_stop(fs->overhead_marker, NULL, 1);
-#endif
+        perfctr_halide_marker_stop(fs->overhead_marker, func, 3);
     }
 
     fs->overhead_iterations++;
-    return 0;
-}
-
-WEAK __attribute__((always_inline)) int halide_perfctr_incr_active_threads(halide_perfctr_state *state) {
-    /*
-    volatile int *ptr = &(state->active_threads);
-    asm volatile ("":::);
-    int ret = __sync_fetch_and_add(ptr, 1);
-    asm volatile ("":::);
-    */
-
-    perfctr_halide_start_thread();
-    return 0;
-}
-
-WEAK __attribute__((always_inline)) int halide_perfctr_decr_active_threads(halide_perfctr_state *state) {
-    /*
-    //int thread_idx = perfctr_halide_get_thread_index();
-    volatile int *ptr = &(state->active_threads);
-    asm volatile ("":::);
-    int ret = __sync_fetch_and_sub(ptr, 1);
-    asm volatile ("":::);
-    */
-
-#ifndef USE_LIKWID
-    /*
-    if(last_counters != NULL) {
-      perfctr_halide_marker_stop((*last_counters)[thread_idx], 1);
-      (*last_counters_used)[thread_idx] = 1;
-    }
-    */
-#endif
-
-    perfctr_halide_stop_thread();
-    return 0;
-}
-
-WEAK __attribute__((always_inline)) int halide_perfctr_enter_parallel_region(halide_perfctr_state *state) {
-    perfctr_halide_enter_parallel_region();
-    return 0;
-}
-
-WEAK __attribute__((always_inline)) int halide_perfctr_leave_parallel_region(halide_perfctr_state *state) {
-    perfctr_halide_leave_parallel_region();
     return 0;
 }
 
